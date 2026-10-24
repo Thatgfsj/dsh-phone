@@ -59,8 +59,8 @@ ctx.slots.inject('sidebar.right.pane.tab.title', () =>
 ```
 
 - key = tab definition 的 `id`（seat 按 definition.id 派发）。
-- 打开只由用户动作触发：设置页「打开手机面板」→ `ctx.sidebarRight.openTab('dshPhone')`；
-  **加载时不自动 openTab**。
+- 打开入口：会话头部手机按钮（§1.3）、设置页「打开手机面板」、以及加载后的 best-effort 自动打开（§1.3）；
+  三者都调用 `ctx.sidebarRight.openTab('dshPhone')`，右栏按 contentId 去重/reveal。
 - 未注册 `rightbar` / `rightbar.session`（single slot 被官方占用，注册会遮蔽右栏）。
 
 ### 1.2 设置页
@@ -83,11 +83,25 @@ id:'dsh-phone', order:60, label: () => t('settings.section') }, PhoneSettings))`
   **不使用** `conversation.session.header.corner`：该 single slot 已被官方
   `client-ui-sidebar-right ExpandButton` 占用（catalog `replaceRisk: shadows-shipped-ui`），
   注册会遮蔽官方右栏展开按钮（review 已确认改用 utilities）。
-- **自动打开（best effort）**：`apply()` 末尾 `void maybeAutoOpenPhone({...})`——读一次
-  `GET /dsh-phone/api/config`；仅 `onboarding.status === 'accepted'`（旧 Host 缺字段视为 accepted）
-  时调用 `openTab`；shell 尚未 adopt 会话时抛错 → 每 500ms 重试、最多 10s 后静默放弃；
-  配置读取失败返回 `unavailable`。全程不阻塞 apply、不抛错。
-- 打开幂等：右栏按 contentId 去重/reveal；header 与设置页「打开手机面板」打开同一 tab。
+- **自动打开（best effort，issue #45/#47）**：`apply()` 末尾 `void maybeAutoOpenPhone({...})`——读一次
+  `GET /dsh-phone/api/config`，只要 `onboarding.status !== 'declined'`（**`pending` 也尝试**；旧 Host 缺字段
+  视为 accepted）就调用 `openTab`；shell 尚未 adopt 会话时抛错 → 每 500ms 重试、最多 10s 后静默放弃；
+  `declined` 不自动打开（会话头部按钮仍可手动打开）；配置读取失败返回 `unavailable`。全程不阻塞 apply、不抛错。
+- **pending 自动打开后的第一眼**：面板内是 onboarding 三态卡（§4.1），用户可直接选运行时并同意，
+  无需先去设置页；`declined` 时自动打开被跳过，手动打开会显示「已暂停使用」+ 重新启用。
+- 打开幂等：右栏按 contentId 去重/reveal；header、设置页与自动打开打开同一 tab。
+
+### 1.4 首次安装/更新后必须刷新页面（issue #48）
+
+客户端插件模块（`lib/client.js`）在**页面启动时**进入 `window.__DSH_BOOT__` 启动图。
+插件动态安装、更新或在插件管理中启用后，DSH 的 HMR 只会重建**已加载**模块，
+不会向已打开页面注入新的模块行；因此旧页面会出现「Host 工具可用，但没有手机入口/设置页」。
+处理：**刷新页面（F5）** 让启动图重算。
+
+- 刷新**不中断会话**：Session 在 Host 侧持久化；手机实例的懒启动/休眠状态也在 Host，页面只是重连。
+- 刷新后 auto-open（§1.3）会再执行一次：`pending` 会打开面板并显示确认卡，`accepted` 直接进入面板。
+- 升级流程因此是「重启 DSH + 刷新页面」：仅刷新换不掉 Host/客户端模块代；仅重启不刷新旧页面也不会注入 UI。
+- 旧页面无法由插件自己提示（插件代码不在旧图里），所以这条必须写入安装文档与 Agent 技能。
 
 ## 2. 视频协议（客户端视角）
 
@@ -248,3 +262,5 @@ header 入口注册与点击→openTab、auto-open 条件/重试/超时/不抛�
 7. onboarding 三态与写入（含 409 重试、`E_ONBOARDING_REQUIRED` 容错）只有单测；真实页面交互未验证（#8）。
 8. 会话头部按钮在真实 header 的可见性/间距（utilities 右对齐列表）、点击后右栏展开行为未验证（#8）。
 9. 自动打开的 adopt 时机（10s 窗口是否足够）未验证；仅单测覆盖重试/超时/静默失败。
+10. 动态安装后「刷新页面 → 入口/自动打开出现」的真实页面流程未验证（#48 依据 DSH 客户端模块加载模型与
+    用户反馈整理；「刷新不中断会话」为设计语义，Host 侧会话与实例状态不受页面刷新影响）。
