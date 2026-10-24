@@ -1,0 +1,67 @@
+{
+  "name": "dsh-phone",
+  "version": "0.0.0",
+  "description": "DSH 的手机：给 DeepSeek Harness 提供运行在后端、经浏览器右侧栏呈现的 Android 实例，并注册 phone_* 工具供 Agent 操作。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "icon": "./icon.svg",
+  "files": [
+    "lib/",
+    "locale/",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "scripts/"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Thatgfsj/dsh-phone.git"
+  },
+  "homepage": "https://github.com/Thatgfsj/dsh-phone#readme",
+  "bugs": {
+    "url": "https://github.com/Thatgfsj/dsh-phone/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "android",
+    "adb",
+    "scrcpy"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0",
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test",
+    "check": "npm run typecheck && npm run test && npm run lines",
+    "lines": "node scripts/check-file-lines.mjs",
+    "prepack": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}

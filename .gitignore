@@ -1,0 +1,17 @@
+# 依赖
+node_modules/
+
+# 构建产物（绝不提交）
+lib/
+dist/
+*.tgz
+coverage/
+.nyc_output/
+
+# 运行时下载/缓存产物（由脚本生成，不进仓库）
+assets/scrcpy-server*.jar
+
+# worktree 与本地杂项
+.worktrees/
+*.log
+.DS_Store

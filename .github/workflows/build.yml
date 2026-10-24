@@ -1,0 +1,45 @@
+# Build-time CI only.
+#
+# Repository policy: pull requests do NOT run CI. The pipeline runs only when
+# a release tag (v*) is pushed or when triggered manually from the Actions UI.
+# Reviewers run "npm run check" locally before merging a PR.
+name: build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # The lockfile may lag behind package.json during the scaffold phase,
+      # so use "npm install" instead of "npm ci" in this job.
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      - name: Check (typecheck + test + file lines)
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      - name: Package
+        run: npm pack --silent
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-phone
+          path: '*.tgz'
+          if-no-files-found: error
