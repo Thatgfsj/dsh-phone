@@ -29,7 +29,7 @@
 | `@yume-chan/stream-extra` | `^2.6.1` | dependencies | Tango 的 Web Streams 工具（`Consumable`、`WrapReadableStream`、`BufferedReadableStream` 等）；见 §5 为何直接声明 | 是 | MIT |
 | `@yume-chan/scrcpy` | `^2.3.0` | dependencies | scrcpy 协议/选项/H.264 包解析/控制消息 writer | 是 | MIT |
 | `@yume-chan/adb-scrcpy` | `^2.3.2` | dependencies | 把 scrcpy server 推到设备、起视频/控制通道（`AdbScrcpyClient`） | 是 | MIT |
-| `@yume-chan/scrcpy-decoder-tinyh264` | `^2.1.0` | dependencies | 浏览器端 WASM 软解兜底（**v1 受构建约束，见 §7**） | 是 | MIT（内含 `tinyh264` 为 Apache-2.0 传递依赖） |
+| `tinyh264` | `^0.0.7` | dependencies | 浏览器端 **WASM 软解兜底**（#6 方案 A 主线程解码，用法见 §7）；wasm 以 base64 data URI 内联，无额外资产 | 是（仅 client bundle 引用） | **Apache-2.0** |
 
 ### peerDependencies（宿主提供，禁止放 dependencies）
 
@@ -51,8 +51,9 @@
 | `esbuild` | `^0.25.0` | dev | Host 逐文件转译 + Client 单文件打包（`scripts/build.mjs`） | 否 | MIT |
 | `typescript` | `^5.7.0` | dev | `tsc --noEmit` 严格模式检查 | 否 | Apache-2.0 |
 
-全部直接依赖的 License 均为 **MIT**（`typescript` 为 Apache-2.0，仅开发期使用；`tinyh264` 为 Apache-2.0
-传递依赖，仅在启用软解时进入客户端 bundle），与仓库自身 MIT 兼容，无 copyleft 风险。
+直接运行时依赖里 `@yume-chan/*` 与 `@deepseek-ai/*` 均为 **MIT**；`tinyh264` 是 **Apache-2.0**
+（宽松许可，与 MIT 兼容、无 copyleft 传染，但**要求保留版权与许可声明** —— 它会被打进 `lib/client.js`，
+第三方许可清单由 #7 在 README/LICENSE 汇总）。`typescript` 为 Apache-2.0，仅开发期使用。
 
 ## 2. 版本策略
 
@@ -67,6 +68,9 @@
 - **`schemastery` / `cordis` 用 `~`**，与宿主 `@deepseek-ai/dsh@0.2.1-rc.2` 的 `dependencies` 一致
   （`~3.18.5` / `~4.0.5`），避免出现第二份实例。
 - **升级 `@deepseek-ai/*` 必须同步改 `engines.dsh`**（当前 `>=0.2.1-rc.2 <0.3.0`）。
+- **`tinyh264` 用 `^` 但只看 0.0.x**：它还是 0.x 预发布形态（当前 `0.0.7`），`^` 实际锁死 0.0；升级时
+  必须按 §7 的三种导入路径（`es/TinyH264.js` 默认导出 = Emscripten Module 工厂、`es/TinyH264Decoder.js`
+  默认导出 = 解码器类、包根 `es/index.js` 含**无扩展名**相对导入）重新核对，并重跑 client bundle 冒烟。
 
 ## 3. /tmp 安装试验记录（改仓库之前完成）
 
@@ -112,7 +116,7 @@ export const Schema = z.object({ a: z.string().default('x') })
 export type Ctx = Context
 ```
 
-### 3.1 仓库内实际安装结果
+### 3.1 仓库内实际安装结果（#11 时点，保留作历史记录）
 
 ```
 $ npm install
@@ -132,6 +136,32 @@ dsh-phone@0.0.0 /home/thatgfsj/AIagent/.phone-wt/deps
 ├── esbuild@0.25.12
 └── typescript@5.9.3
 $ npm ls --all | grep -Ei 'UNMET PEER|invalid|ERR!'   # 无输出
+```
+
+### 3.2 修正后的安装结果（#17：tinyh264 提为直接依赖、移除 decoder 包）
+
+```
+$ npm install
+added 39 packages in 1s                      # #11 时为 42，移除 decoder 包后减少 3
+$ npm ls --depth=0
+dsh-phone@0.0.0 /home/thatgfsj/AIagent/.phone-wt/deps2
+├── @deepseek-ai/cordis@4.0.5
+├── @deepseek-ai/dsh-tools@0.2.1-rc.2
+├── @deepseek-ai/schemastery@3.18.5
+├── @types/node@24.19.2
+├── @types/react@19.3.0
+├── @yume-chan/adb-scrcpy@2.3.2
+├── @yume-chan/adb@2.6.4
+├── @yume-chan/scrcpy@2.3.0
+├── @yume-chan/stream-extra@2.6.1
+├── esbuild@0.25.12
+├── tinyh264@0.0.7
+└── typescript@5.9.3
+
+$ npm ls tinyh264
+dsh-phone@0.0.0 ... └── tinyh264@0.0.7        # 直接依赖，不再是 phantom dep
+$ npm ls @yume-chan/scrcpy-decoder-tinyh264
+dsh-phone@0.0.0 ... └── (empty)               # 已移除
 ```
 
 ## 4. peer 冲突处理
@@ -181,7 +211,7 @@ globals: ReadableStream=function WritableStream=function TransformStream=functio
    版本取与传递依赖同 minor（`^2.6.1`）。
 5. **打包边界**：Host 用 `bundle: false` + 裸导入，运行时由 profile 的 `node_modules` 解析；
    Client 侧 esbuild `platform: browser`，`react` 与 `@deepseek-ai/*` 已 external。
-   **Host 代码不得 import `@yume-chan/scrcpy-decoder-tinyh264`**（浏览器/WASM 专用）。
+   **Host 代码不得 import `tinyh264`**（浏览器/WASM 专用；`TinyH264.js` 依赖 `fetch`/DOM 环境）。
 6. 服务端消费 H.264 时用的是 `@yume-chan/scrcpy` 的 `ScrcpyMediaStreamPacket` 与 NAL/协议头解析，
    不改码流、不解码（架构 §4「Host 侧零转码」），所以 Host 侧没有 WASM 依赖。
 
@@ -198,7 +228,13 @@ globals: ReadableStream=function WritableStream=function TransformStream=functio
   运行时由 `AdbScrcpyClient.pushServer` 推到 `/data/local/tmp/scrcpy-server.jar`。
 - 本机与 CI 都不预置 jar；离线场景由用户手动放到 `assets/`，文档在 #7 补。
 
-## 7. 客户端解码依赖的构建约束（重要，给 #6）
+## 7. 客户端软解：用 `tinyh264`，不用 `@yume-chan/scrcpy-decoder-tinyh264`
+
+**结论（#6 方案 A，已落地于 #17）**：client 软解兜底不再使用 `@yume-chan/scrcpy-decoder-tinyh264`
+（已从 `dependencies` 移除），改为直接 import `tinyh264` 的 `es/` 子路径，在主线程解码。
+主路径仍是 WebCodecs 硬解。
+
+### 7.1 为什么 decoder 包不可用
 
 `@yume-chan/scrcpy-decoder-tinyh264` 在构造解码器时用
 `new Worker(new URL('./worker.js', import.meta.url))` 起 worker。而仓库现有客户端构建
@@ -209,19 +245,45 @@ globals: ReadableStream=function WritableStream=function TransformStream=functio
   49 │ worker = new Worker(new URL("./worker.js", import.meta.url), {
 ```
 
-后果：`import.meta` 被置空 → `new URL('./worker.js', undefined)` 抛错，**软解兜底在现有单文件
-CJS 客户端 bundle 里跑不起来**（构建本身不报错，是运行期才炸）。实测打包产物 156,649 bytes，
-其中 `WebAssembly` 出现 0 次 —— worker 与 WASM 没有被内联。
+`import.meta` 被置空 → 运行期 `new URL('./worker.js', undefined)` 抛错：**构建不报错，是运行期才炸**。
+当时实测打包产物 156,649 bytes 且 `WebAssembly` 出现 0 次 —— worker 与 WASM 都没被内联。
 
-处理建议（**由 #6 客户端任务决策，本 PR 只记录**）：
+### 7.2 唯一允许的导入方式
 
-1. 主路径 WebCodecs（架构既定）；软解兜底在 v1 **先不做**，解不出来时降级为「当前浏览器不支持 H.264
-   硬解」的提示 + 静态截图。风险最低，建议 v1 走这条。
-2. 若要软解：直接 import `tinyh264`（`tinyh264/es/TinyH264.js` 里的 WASM 是 **base64 data URI 内联**的，
-   `isDataURI` 分支存在，不需要额外 `.wasm` 资源），在主线程解码。**未验证**：主线程解码 CPU 开销、
-   与 `yuv-canvas` 的配合。
-3. 若最终确定不使用：后续 PR 从 `dependencies` 移除 `@yume-chan/scrcpy-decoder-tinyh264`。
-   本 PR 按 #11 清单保留。
+```ts
+// 默认导出 = Emscripten Module 工厂；WASM 以 base64 data URI 内联，无需额外 .wasm 资产
+import createTinyH264Module from 'tinyh264/es/TinyH264.js'
+// 默认导出 = 解码器类（**不是** named export）
+import TinyH264PictureDecoder from 'tinyh264/es/TinyH264Decoder.js'
+```
+
+- **只能走 `es/` 子路径**。包根 `tinyh264`（`main: lib/index.js` / `module: es/index.js`）里的
+  `es/index.js` 是 `import { init } from './TinyH264Worker'`（**无扩展名**），Node ESM 下直接 import 包根会失败。
+- 两个文件都只有 **default** export；写 `import { TinyH264Decoder } ...` 会被 esbuild 报
+  `No matching export in "node_modules/tinyh264/es/TinyH264Decoder.js" for import "TinyH264Decoder"`（已实测）。
+- `tinyh264@0.0.7` **没有 `exports` 字段、也没有类型声明** → 子路径可直接解析（Node + esbuild 均验证），
+  但需要 ambient 声明（client 侧在 `src/client/shims.d.ts`）。
+- 解码器构造函数是 `new TinyH264Decoder(module, onPictureReady)`，输出 YUV420（`Uint8Array`），
+  色彩转换由 client 自己做（`src/client/yuv.ts`）。
+
+### 7.3 打包实测（仓库 client 构建参数）
+
+```
+$ esbuild entry.js --bundle --format=cjs --platform=browser \
+    --target=chrome110,safari16,firefox115 --external:'@deepseek-ai/*' --minify
+exit=0   174,631 bytes
+markers: import.meta.url=0  new Worker(=0  WebAssembly=1  data:application=1
+```
+
+→ 无 worker、无 `import.meta`、WASM 内联为 base64 data URI，**单文件 CJS bundle 可正常工作**；
+minify 后 client bundle 增加约 170 KB（只在软解路径被引用，esbuild 会打进同一个 client.js）。
+
+### 7.4 维护红线
+
+- **不得再 import `@yume-chan/scrcpy-decoder-tinyh264`**（已从依赖移除）；若要恢复，需先解决
+  worker + `import.meta` 与单文件 CJS bundle 的冲突（例如把 client 改成 esm 并额外产出 worker chunk）。
+- **Host 侧禁止 import `tinyh264`**（浏览器/WASM 专用）。
+- 升级 `tinyh264` 必须重跑 §7.3 的 bundle 冒烟，并核对 default export 形状与 `es/` 文件列表。
 
 ## 8. 维护规则与自检清单
 
@@ -249,7 +311,10 @@ npm pack --dry-run          # 确认 files 白名单没有 node_modules / jar
    没有真实 TCP adbd 连接（本机 waydroid adb 端口不可达）。
 2. `@yume-chan/stream-extra` 的 `WrapReadableStream`/`WrapWritableStream` 能否直接包 `net.Socket`
    —— 需 #3 运行时任务实测，备选 `node:stream` 的 `Readable.toWeb`。
-3. 客户端软解路径（§7）：三种方案的运行期表现均未实测（本机无浏览器自动化环境）。
+3. 客户端软解路径（§7）的**运行期**表现未实测：已验证 bundle 可构建、无 worker/import.meta、
+   WASM 以 data URI 内联；但主线程解码的 CPU/帧率、与 canvas 绘制的配合，本机无浏览器自动化环境，
+   需 #6/#8 在真实页面验证。
 4. `npm pack` 产物在真实 profile 中的 pnpm 安装（依赖是否随包正确落地）由 #8 安装冒烟覆盖。
-5. `tinyh264`（Apache-2.0）的 NOTICE 义务：当前未进 tarball；若客户端启用软解并打包进
-   `lib/client.js`，需在 README/LICENSE 附第三方声明，交给 #7 文档任务。
+5. **`tinyh264`（Apache-2.0）的许可声明义务**：它会被打进 `lib/client.js` 随包分发，必须在
+   README/LICENSE 附第三方许可与版权声明（h264bsd 上游为 MIT/Apache 双许可形态，具体文本以
+   `node_modules/tinyh264/LICENSE` 为准），交给 #7 文档任务汇总。
