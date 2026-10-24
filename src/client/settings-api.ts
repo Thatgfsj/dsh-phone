@@ -5,10 +5,21 @@
  * unit-testable without rendering: write one key with the last known
  * revision, refresh and retry exactly once on 409 `E_CONFIG_CONFLICT`.
  */
+/** First-run onboarding state (issue #30 guard, contract frozen for #31). */
+export type OnboardingStatus = 'pending' | 'accepted' | 'declined'
+export type OnboardingChoice = '' | 'emulator' | 'redroid' | 'attach'
+
+export interface OnboardingState {
+  status: OnboardingStatus
+  choice: OnboardingChoice
+}
+
 export interface PhoneConfigView {
   runtime: string
   attach: { endpoint: string; userHint: string; resolved: boolean }
   stream: { maxSize: number; maxFps: number; bitrate: number }
+  /** Optional for forward compatibility: an older Host may omit it. */
+  onboarding?: OnboardingState
   revision: number
 }
 
@@ -69,6 +80,31 @@ export function createFetchConfigApi(base = '/dsh-phone/api'): ConfigApi {
         method: 'POST',
         body: JSON.stringify({ path, value, revision }),
       }),
+  }
+}
+
+/**
+ * Read the run status, treating the onboarding guard and unavailable carriers
+ * as "no status yet" instead of a fatal error:
+ * - `E_ONBOARDING_REQUIRED` — GET /status answers 200 with `ok:false` while
+ *   onboarding is pending (issue #30); the settings page still has to render.
+ * - `E_NO_WEB` / `E_RUNTIME_UNAVAILABLE` — nothing to report yet.
+ */
+export async function readRunStatus(
+  api: Pick<ConfigApi, 'getStatus'>,
+): Promise<PhoneStatusView | undefined> {
+  try {
+    return await api.getStatus()
+  } catch (error) {
+    if (
+      error instanceof ConfigApiError &&
+      (error.code === 'E_ONBOARDING_REQUIRED' ||
+        error.code === 'E_NO_WEB' ||
+        error.code === 'E_RUNTIME_UNAVAILABLE')
+    ) {
+      return undefined
+    }
+    throw error
   }
 }
 
