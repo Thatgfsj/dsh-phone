@@ -114,6 +114,24 @@ describe('PhoneLifecycle：懒启动与 single-flight', () => {
     assert.equal(calls.errors.length, 1)
   })
 
+  test('启动成功后清空 lastError（issue #44）', async () => {
+    let failing = true
+    const { lifecycle, calls } = setup({
+      async start() {
+        calls.start += 1
+        if (failing) throw new Error('ADB 认证握手超时')
+      },
+    })
+    await assert.rejects(lifecycle.ensureRunning(), /握手超时/)
+    assert.equal(lifecycle.state, 'stopped')
+    assert.match(lifecycle.status.lastError ?? '', /握手超时/)
+
+    failing = false
+    await lifecycle.ensureRunning()
+    assert.equal(lifecycle.state, 'running')
+    assert.equal(lifecycle.status.lastError, undefined)
+  })
+
   test('启动超时 → 抛超时错误并回 stopped', async () => {
     const { lifecycle, clockAdvance } = setup(
       { start: () => new Promise<void>(() => undefined) },

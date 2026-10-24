@@ -49,14 +49,30 @@ export type AdbErrorCode =
   | 'push'
   | 'closed'
   | 'protocol'
+  /** 设备可连但尚未就绪（冷启动窗口内 screencap/命令输出异常）。 */
+  | 'device-not-ready'
+
+const RETRYABLE_CODES: readonly AdbErrorCode[] = [
+  'connect',
+  'timeout',
+  'closed',
+  'device-not-ready',
+]
 
 export class AdbError extends Error {
   readonly code: AdbErrorCode
+  /** 是否值得重试（暂时性错误：boot 窗口/设备未就绪等）。 */
+  readonly retryable: boolean
 
-  constructor(message: string, code: AdbErrorCode, options?: { cause?: unknown }) {
+  constructor(
+    message: string,
+    code: AdbErrorCode,
+    options?: { cause?: unknown; retryable?: boolean },
+  ) {
     super(message, options)
     this.name = 'AdbError'
     this.code = code
+    this.retryable = options?.retryable ?? RETRYABLE_CODES.includes(code)
   }
 }
 
