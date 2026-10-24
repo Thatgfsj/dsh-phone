@@ -44,7 +44,11 @@ export interface PhoneOperations {
   appLaunch(pkg: string): Promise<void>
   dumpUi(): Promise<string>
   shell(command: string): Promise<string>
-  touch(action: 'down' | 'move' | 'up', x: number, y: number): Promise<void>
+  /**
+   * scrcpy 触摸注入（面板手势）。注意与 runtime `PhoneLifecycle.touch()`
+   *（idle 唤醒信号）**不同名不同义**：host 侧统一叫 `touchScreen`，避免混淆。
+   */
+  touchScreen(action: 'down' | 'move' | 'up', x: number, y: number): Promise<void>
   /** R5：不落盘的连通验证（connect + getprop ro.product.model）。 */
   verifyEndpoint(endpoint: string): Promise<VerifyResult>
 }
@@ -57,19 +61,22 @@ export interface VerifyResult {
 }
 
 /** attachments 服务窄接口（calibration §1.5；可选，缺失时 phone_screenshot 降级文本）。 */
+export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+
 export interface AttachmentRef {
   attachmentId: string
-  mediaType: string
+  mediaType: ImageMediaType
   bytes: number
   width: number
   height: number
   name?: string
+  originalDimensions?: { width: number; height: number }
 }
 
 export interface AttachmentsLike {
   saveImage(input: {
     data: Uint8Array
-    mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+    mediaType: ImageMediaType
     name?: string
   }): Promise<AttachmentRef>
 }

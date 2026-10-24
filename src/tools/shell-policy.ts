@@ -72,3 +72,38 @@ export function evaluateShellCommand(raw: string): ShellCommandDecision {
 /** 白名单摘要（工具描述与文档共用，避免多处手写漂移）。 */
 export const SHELL_WHITELIST_SUMMARY =
   'getprop、wm size、dumpsys 只读 service（' + DUMPSYS_READONLY_SERVICES.join('/') + '）'
+/* ------------------------------ pre-execute 接线 ------------------------------ */
+
+export interface ShellApprovalExec {
+  name: string
+  arguments?: unknown
+}
+
+export type ShellApprovalNext = () => Promise<unknown>
+
+/** tools/pre-execute 的最小宿主结构（单测注入假 ctx；index 传真 ctx）。 */
+export interface ShellApprovalHost {
+  on(
+    event: 'tools/pre-execute',
+    listener: (exec: ShellApprovalExec, next: ShellApprovalNext) => Promise<unknown>,
+  ): unknown
+}
+
+/**
+ * 注册 phone_shell 审批 waterfall（SPEC §6.3，architecture §2.2）：
+ * 白名单命令 `next()` 放行；其余返回 `{kind:'ask', reason, displayReason:{en,zh}}`。
+ */
+export function registerShellApproval(host: ShellApprovalHost): void {
+  host.on('tools/pre-execute', async (exec, next) => {
+    if (exec.name !== 'phone_shell') return next()
+    const args = exec.arguments as { cmd?: unknown } | undefined
+    const command = typeof args?.cmd === 'string' ? args.cmd : ''
+    const decision = evaluateShellCommand(command)
+    if (decision.kind === 'allow') return next()
+    return {
+      kind: 'ask',
+      reason: decision.reason,
+      displayReason: decision.displayReason,
+    }
+  })
+}

@@ -48,7 +48,14 @@
 | `GET /config` | 当前配置快照 + settings revision |
 | `POST /config` | 单键写入（`attach.endpoint｜resolved｜userHint`），R4 回读 + 复验 |
 | `POST /attach/verify` | 连通验证（connect + `getprop ro.product.model`），不落盘（R5） |
+| `POST /agent/config` | 本地 Agent 通道：loopback + 无 Origin + `x-dsh-phone-token`（见下） |
 | `GET /screenshot` | 按需单帧 PNG（Agent 截图通道） |
+
+操作 Agent 无法使用浏览器 cookie，因此插件在 `$DSH_HOME/storages/dsh-phone/agent.json`（0600）
+写入 `{token, baseUrl}` 供其调用 `/dsh-phone/api/agent/config`：先 `POST /attach/verify` 验证端点（R5），
+再写 `attach.endpoint` 与 `attach.resolved`（R1 单键），最后 `GET /status` 复验（R4b）；插件卸载时删除
+token 文件、重载轮换。候选路径/端口探测仍由 Agent 的 shell 完成，插件不扫盘。完整 curl 示例见
+[docs/host.md](docs/host.md) §5.1。
 
 WS `/dsh-phone/stream` 由 stream 层 `createStreamUpgradeRoute` 注册（`DPH1` 帧头，见
 [docs/protocol.md](docs/protocol.md)）。

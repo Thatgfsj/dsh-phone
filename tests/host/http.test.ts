@@ -39,10 +39,16 @@ function makeRequest(options: {
   url: string
   body?: unknown
   auth?: number
+  remoteAddress?: string
+  headers?: Record<string, string>
 }): IncomingMessage {
   const emitter = new EventEmitter() as unknown as IncomingMessage & EventEmitter
   ;(emitter as unknown as { method: string }).method = options.method
   ;(emitter as unknown as { url: string }).url = options.url
+  ;(emitter as unknown as { socket: { remoteAddress: string } }).socket = {
+    remoteAddress: options.remoteAddress ?? '127.0.0.1',
+  }
+  ;(emitter as unknown as { headers: Record<string, string> }).headers = options.headers ?? {}
   if (options.auth !== undefined) {
     ;(emitter as unknown as { authStatus: number }).authStatus = options.auth
   }
@@ -71,6 +77,7 @@ interface Harness {
   recheckStatus: PhoneStatus
   view: ConfigView
   connection: { requestRejection(req: IncomingMessage): number | undefined } | undefined
+  agentAuth: ((req: IncomingMessage) => boolean) | undefined
 }
 
 function makeHarness(overrides: Partial<HttpRouteDeps> = {}): Harness {
@@ -98,12 +105,14 @@ function makeHarness(overrides: Partial<HttpRouteDeps> = {}): Harness {
     view: { runtime: 'attach', stream: { maxSize: 720, maxFps: 15, bitrate: 2000000 } },
     connection: { requestRejection: () => undefined },
     verifiedSet: new Set<string>(),
+    agentAuth: undefined,
   } as unknown as Harness
   harness.handler = createApiHandler({
     service,
     getSettings: () => settings,
     getConnection: () => harness.connection,
     getConfigView: () => harness.view,
+    agentAuth: async (req) => harness.agentAuth?.(req) ?? false,
     async recheckConnectivity() {
       harness.rechecked += 1
       return harness.recheckStatus
@@ -115,7 +124,13 @@ function makeHarness(overrides: Partial<HttpRouteDeps> = {}): Harness {
 
 async function invoke(
   harness: Harness,
-  options: { method: string; url: string; body?: unknown },
+  options: {
+    method: string
+    url: string
+    body?: unknown
+    remoteAddress?: string
+    headers?: Record<string, string>
+  },
 ): Promise<FakeResponse> {
   const response = makeResponse()
   await harness.handler.handle(
@@ -185,6 +200,68 @@ test('POST /config：非法路径 400 E_BAD_PATH；非白名单字段 400', asyn
   })
   assert.equal(response.statusCode, 400)
   assert.equal(json(response).error.code, 'E_BAD_REQUEST')
+})
+
+test('POST /config：userHint 非字符串 → 400（不能被映射成 503）', async () => {
+  const harness = makeHarness()
+  let response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/config',
+    body: { path: ['attach', 'userHint'], value: { nested: true }, revision: 5 },
+  })
+  assert.equal(response.statusCode, 400)
+  assert.equal(json(response).error.code, 'E_BAD_REQUEST')
+  assert.equal(harness.settings.calls, 0)
+
+  response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/config',
+    body: { path: ['attach', 'resolved'], value: 'yes', revision: 5 },
+  })
+  assert.equal(response.statusCode, 400)
+  assert.equal(json(response).error.code, 'E_BAD_REQUEST')
+  assert.equal(harness.settings.calls, 0)
+})
+
+test('本地 Agent 通道 /agent/config：token 鉴权通过时绕过 requestRejection 并写入', async () => {
+  const harness = makeHarness()
+  harness.connection = { requestRejection: () => 401 }
+  harness.agentAuth = (req) =>
+    (req.headers as Record<string, string>)['x-dsh-phone-token'] === 'good-token'
+
+  // 无 token → 仍按原 requestRejection 拒绝
+  let response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/agent/config',
+    body: { path: ['attach', 'userHint'], value: '模拟器在 D:\\Android\\Sdk', revision: 5 },
+  })
+  assert.equal(response.statusCode, 401)
+  assert.equal(json(response).error.code, 'E_AUTH')
+
+  // 带正确 token → 放行并写配置
+  response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/agent/config',
+    body: { path: ['attach', 'userHint'], value: '模拟器在 D:\\Android\\Sdk', revision: 5 },
+    headers: { 'x-dsh-phone-token': 'good-token' },
+  })
+  assert.equal(response.statusCode, 200)
+  assert.equal(json(response).value.attach.userHint, '模拟器在 D:\\Android\\Sdk')
+  assert.equal(harness.settings.calls, 1)
+})
+
+test('本地 Agent 通道：agent/config 同样受 R5 约束（未 verify 写 endpoint → 409）', async () => {
+  const harness = makeHarness()
+  harness.connection = { requestRejection: () => 401 }
+  harness.agentAuth = () => true
+  const response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/agent/config',
+    body: { path: ['attach', 'endpoint'], value: '127.0.0.1:5555', revision: 5 },
+  })
+  assert.equal(response.statusCode, 409)
+  assert.equal(json(response).error.code, 'E_NOT_VERIFIED')
+  assert.equal(harness.settings.calls, 0)
 })
 
 test('POST /config：userHint 直接写入（无需 verify），返回新 revision', async () => {

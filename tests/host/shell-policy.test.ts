@@ -6,7 +6,9 @@ import {
   SHELL_WHITELIST_SUMMARY,
   evaluateShellCommand,
   isWhitelistedShellCommand,
+  registerShellApproval,
 } from '../../src/tools/shell-policy.ts'
+import type { ShellApprovalExec, ShellApprovalHost, ShellApprovalNext } from '../../src/tools/shell-policy.ts'
 
 test('白名单：getprop / wm size / dumpsys 只读子集免确认', () => {
   assert.ok(isWhitelistedShellCommand('getprop'))
@@ -58,4 +60,45 @@ test('白名单摘要包含三类命令（工具描述复用）', () => {
   assert.match(SHELL_WHITELIST_SUMMARY, /getprop/)
   assert.match(SHELL_WHITELIST_SUMMARY, /wm size/)
   assert.match(SHELL_WHITELIST_SUMMARY, /dumpsys/)
+})
+test('注册级：registerShellApproval 在 tools/pre-execute 上接线 ask / next', async () => {
+  let listener:
+    | ((exec: ShellApprovalExec, next: ShellApprovalNext) => Promise<unknown>)
+    | undefined
+  const events: string[] = []
+  const host: ShellApprovalHost = {
+    on(event, handler) {
+      events.push(event)
+      listener = handler
+      return () => undefined
+    },
+  }
+  registerShellApproval(host)
+  assert.deepEqual(events, ['tools/pre-execute'])
+  assert.ok(listener)
+
+  let nextCalls = 0
+  const next: ShellApprovalNext = async () => {
+    nextCalls += 1
+    return { kind: 'allow' }
+  }
+
+  // 非 phone_shell：原样 next
+  await listener!({ name: 'phone_tap', arguments: { x: 1, y: 2 } }, next)
+  assert.equal(nextCalls, 1)
+
+  // 白名单 phone_shell：next 放行
+  await listener!({ name: 'phone_shell', arguments: { cmd: 'getprop ro.product.model' } }, next)
+  assert.equal(nextCalls, 2)
+
+  // 非白名单 phone_shell：ask，不调用 next
+  const decision = (await listener!(
+    { name: 'phone_shell', arguments: { cmd: 'rm -rf /sdcard' } },
+    next,
+  )) as { kind: string; reason: string; displayReason: { en: string; zh: string } }
+  assert.equal(decision.kind, 'ask')
+  assert.equal(nextCalls, 2)
+  assert.match(decision.reason, /phone_shell/)
+  assert.ok(decision.displayReason.en.length > 0)
+  assert.ok(decision.displayReason.zh.length > 0)
 })

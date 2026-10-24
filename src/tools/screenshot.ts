@@ -4,6 +4,14 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { AttachmentRef } from '../phone/contracts.ts'
 import { bootingFailure, failureFrom, type ToolDeps } from './common.ts'
 
+const IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
+
+function normalizeMediaType(value: string): (typeof IMAGE_MEDIA_TYPES)[number] {
+  return (IMAGE_MEDIA_TYPES as readonly string[]).includes(value)
+    ? (value as (typeof IMAGE_MEDIA_TYPES)[number])
+    : 'image/png'
+}
+
 interface ScreenshotValue {
   ok: boolean
   message: string
@@ -30,6 +38,14 @@ const SCREENSHOT_SCHEMA = {
         width: { type: 'integer', required: true },
         height: { type: 'integer', required: true },
         name: { type: 'string' },
+        originalDimensions: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            width: { type: 'integer', required: true },
+            height: { type: 'integer', required: true },
+          },
+        },
       },
     },
     fallback: {
@@ -43,6 +59,7 @@ const SCREENSHOT_SCHEMA = {
     code: { type: 'string' },
     retryable: { type: 'boolean' },
     bootMs: { type: 'integer' },
+    hints: { type: 'array', items: { type: 'string' } },
   },
 } as const
 
@@ -56,17 +73,21 @@ export function createScreenshotTool(deps: ToolDeps): ToolDefinition {
     output: {
       schema: SCREENSHOT_SCHEMA,
       render: (_args, value) => {
-        const message = value.message ?? 'screenshot'
         if (value.image) {
           return [
-            { type: 'text', text: message },
+            { type: 'text', text: value.message ?? 'screenshot' },
             {
               type: 'image',
               attachment: { ...value.image, mediaType: value.image.mediaType as 'image/png' },
             },
           ]
         }
-        return [{ type: 'text', text: message }]
+        let text = value.message ?? 'screenshot'
+        if (value.ok === false) {
+          text = (value.code ?? 'E_DEVICE_COMMAND') + ': ' + (value.message ?? '')
+          if (value.hints && value.hints.length > 0) text += '\n' + value.hints.join('\n')
+        }
+        return [{ type: 'text', text }]
       },
     },
     async execute(): Promise<ScreenshotValue> {
@@ -96,12 +117,29 @@ export function createScreenshotTool(deps: ToolDeps): ToolDefinition {
           const ref = await attachments.saveImage({
             data: bytes,
             mediaType: 'image/png',
-            name: `phone-screenshot-${Date.now()}.png`,
+            name: 'phone-screenshot-' + Date.now() + '.png',
           })
+          // 只裁 schema 声明过的字段（attachment 可能带 originalDimensions 等额外字段）
+          const image: AttachmentRef = {
+            attachmentId: ref.attachmentId,
+            mediaType: normalizeMediaType(ref.mediaType),
+            bytes: ref.bytes,
+            width: ref.width,
+            height: ref.height,
+            ...(ref.name === undefined ? {} : { name: ref.name }),
+            ...(ref.originalDimensions === undefined
+              ? {}
+              : {
+                  originalDimensions: {
+                    width: ref.originalDimensions.width,
+                    height: ref.originalDimensions.height,
+                  },
+                }),
+          }
           return {
             ok: true,
-            message: `截图 ${ref.width}x${ref.height}（${ref.bytes} 字节）`,
-            image: ref,
+            message: '截图 ' + image.width + 'x' + image.height + '（' + image.bytes + ' 字节）',
+            image,
           }
         } catch {
           // 附件/模型不支持图片：降级文本，不整体失败（architecture §2.1）

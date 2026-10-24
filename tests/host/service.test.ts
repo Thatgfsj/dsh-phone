@@ -338,7 +338,7 @@ test('touch：复用活动视频会话的控制通道', async () => {
   const harness = makeService()
   const sink = { video: () => {}, error: () => {} }
   await harness.service.startStream(sink)
-  await harness.service.touch('down', 10, 20)
+  await harness.service.touchScreen('down', 10, 20)
   assert.deepEqual(harness.sessions[0]!.touches, ['down:10,20'])
 })
 

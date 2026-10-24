@@ -65,6 +65,8 @@ Host 不直接读写 `cordis.patch.yml`，不自行实现 runtime/收流；runti
   并取 `phone_status`；非 running 返回 `502 E_DEVICE_DISCONNECTED`（retryable=true）。
   注意：此时配置**可能已经落盘**——错误体 message 明确说明，便于操作 Agent 汇报。
 - 写后回读不一致（R4a 失败）返回 `500 E_DEVICE_COMMAND`（retryable=true）。
+- **写入通道**：浏览器设置页走 `POST /config`（connection 同源鉴权）；操作 Agent 走
+  `POST /agent/config`（本地 token，见 §5.2）。二者都收敛到 `writeConfigValue`。
 
 ## 3. 9 个工具（SPEC §4，名称/参数严格一致）
 
@@ -129,7 +131,42 @@ activity/window/display/battery/cpuinfo/meminfo/gfxinfo/input/power/wifi。
 - WS `/dsh-phone/stream` 用 stream 的 `createStreamUpgradeRoute({service, getConnection, getStreamOptions})`
   注册；鉴权在 factory 内用注入的 `ctx.connection` 完成。
 
-### 5.1 Host 层错误码映射
+### 5.1 本地 Agent 通道（SPEC §5.2 步骤 6 补位）
+
+操作 Agent 只有 shell/文件工具，拿不到浏览器 cookie，无法通过 `ctx.connection` 同源鉴权调用
+`POST /config`。Host 因此在 apply 时生成随机 token 并落盘：
+
+- 文件：`$DSH_HOME/storages/dsh-phone/agent.json`（权限 0600；`DSH_HOME` 空则 `~/.dsh`），内容
+  `{"token":"<64 hex>","baseUrl":"http://127.0.0.1:<port>"}`；`baseUrl` 取自 `ctx.webServer.getOrigin()`。
+- 路由：`POST /dsh-phone/api/agent/config`，body 与 `POST /config` 相同（`{path,value,revision?}`，
+  仍只允许 `attach.endpoint｜resolved｜userHint` 三键）。
+- 鉴权：**同时满足** ① `req.socket.remoteAddress` 为 loopback（127/8、::1、::ffff:127/8）；
+  ② 无 `Origin` 头；③ `x-dsh-phone-token` 与文件 token 常量时间相等。任一不满足则回退
+  `ctx.connection.requestRejection` 的原有校验；token 错误且无同源 cookie → 401 `E_AUTH`。
+- R5/R4 不因通道变化：未 verify 的 endpoint 仍 409 `E_NOT_VERIFIED`；写后仍 describe 回读 + phone_status 复验。
+- 清理：插件 dispose（卸载/重载）时删除 token 文件；重载会生成新 token（旧 token 立即失效）。
+
+Agent 侧标准流程（docs 片段，也写进 README）：
+
+```sh
+BASE=$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.env.HOME+'/.dsh/storages/dsh-phone/agent.json','utf8')).baseUrl)")
+TOKEN=$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.env.HOME+'/.dsh/storages/dsh-phone/agent.json','utf8')).token)")
+# 1) 先验证（R5，不落盘）；成功才继续
+curl -sS -X POST "$BASE/dsh-phone/api/attach/verify" -H 'content-type: application/json' \
+  -H "x-dsh-phone-token: $TOKEN" -d '{"endpoint":"127.0.0.1:5555"}'
+# 2) 写 endpoint 与 resolved（R1 两个单键；会被 R4/R5 校验）
+curl -sS -X POST "$BASE/dsh-phone/api/agent/config" -H 'content-type: application/json' \
+  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["attach","endpoint"],"value":"127.0.0.1:5555"}'
+curl -sS -X POST "$BASE/dsh-phone/api/agent/config" -H 'content-type: application/json' \
+  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["attach","resolved"],"value":true}'
+# 3) 复验 phone_status（R4b）
+curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
+```
+
+> 注意：`verify` 成功只记录在进程内 verified 集合；若插件重载，需重新 verify。
+> 候选路径/端口探测仍由操作 Agent 的 shell 完成（插件不扫盘，见 §6.1）。
+
+### 5.2 Host 层错误码映射
 
 | 场景 | HTTP | code | retryable |
 |---|---|---|---|
@@ -150,8 +187,9 @@ activity/window/display/battery/cpuinfo/meminfo/gfxinfo/input/power/wifi。
 
 1. **不实现 `src/tools/attach.ts`（一句话→候选路径/端口自动探测）**。
    按 #4 任务指令第 8 条：候选路径/端口探测由**操作 Agent 的 shell**完成，插件不扫盘；
-   插件只提供 `POST /attach/verify`（connect + getprop）与配置写入（R1/R5）。
-   SPEC §5.2 的路径候选表由 Agent 侧执行，Host 不落地。
+   Host 只提供 `POST /attach/verify`（connect + getprop）、`POST /agent/config`
+   （本地 token 写入，SPEC §5.2 步骤 6）与浏览器 `POST /config`。SPEC §5.2 的路径/端口候选表
+   由 Agent 侧执行，Host 不落地。
 2. **Host 不复制状态机**：idle/paused 计时与 booting 状态由 runtime `src/phone/state.ts`
    （内部使用 `idle.ts` 的 `IdleTimer`）提供，经 `createLifecycle` 注入 PhoneService；
    host 侧没有 `src/phone/idle.ts`（该文件归 runtime）。
@@ -181,6 +219,11 @@ activity/window/display/battery/cpuinfo/meminfo/gfxinfo/input/power/wifi。
    未在 headless profile 实跑（本机仅 web profile）。
 7. **enabled=false 只读路由**：单测覆盖 read-only handler 的鉴权/快照语义（通过 routes 假依赖），
    未在真实设置页验证。
+8. **本地 Agent 通道端到端**：token 生成/0600/常量时间比较/loopback+无 Origin 判定均有单测；
+   但未在真实 dsh Web 进程上验证 `ctx.webServer.getOrigin()` 返回值与真实 socket 的 remoteAddress
+   形态（IPv4-mapped 等），也未验证卸载后 token 文件确实被删除。
+9. **`x-dsh-phone-token` 与同源 cookie 并存**：token 缺失但同源 cookie 有效时走普通 requestRejection
+   分支放行（与浏览器 `POST /config` 等价），该分支只做了单测。
 
 ## 8. 自检
 
@@ -200,3 +243,5 @@ Host 单测（`tests/host/`，不依赖真机）：
 | `config-write.test.ts` | 单键 set、bad-path、冲突重试一次、回读失败、no-settings/no-entry、readPath/deepEqual |
 | `http.test.ts` | 鉴权 401/403/503、status/config 快照、POST config 400/409/502、R5、verify 成功/失败、screenshot、404 |
 | `service.test.ts` | 单飞、booting 中间态、screenshot 串行、control-only INJECT_TEXT、引用计数+5s 宽限、verify、status、事件、dispose |
+| `agent-token.test.ts` | token 路径/生成/0600 落盘、loopback+Origin+常量时间校验、dispose 删除 |
+| `shell-policy.test.ts` | 注册级：tools/pre-execute 捕获并断言白名单 next / 非白名单 ask |

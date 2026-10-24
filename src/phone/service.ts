@@ -282,7 +282,8 @@ export class PhoneService implements PhoneOperations {
     await session.injectText(text)
   }
 
-  async touch(action: 'down' | 'move' | 'up', x: number, y: number): Promise<void> {
+  /** scrcpy 触摸注入（与 lifecycle.touch 的 idle 唤醒信号区分，见 contracts.ts）。 */
+  async touchScreen(action: 'down' | 'move' | 'up', x: number, y: number): Promise<void> {
     const session = await this.#controlSession()
     await session.injectTouch(action, x, y)
   }

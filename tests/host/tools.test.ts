@@ -140,6 +140,62 @@ test('phone_screenshot：有 attachments 输出 image block，渲染 text+image'
   assert.equal((blocks[1] as { type: string }).type, 'image')
 })
 
+test('phone_screenshot：runtime 不可用 → E_RUNTIME_UNAVAILABLE（schema 含 hints，不炸 output 校验）', async () => {
+  const service = makeService()
+  service.failOn(
+    'ensureInteractive',
+    Object.assign(new Error('没有可用的 Android 运行时'), {
+      code: 'unavailable',
+      guide: '请安装 Docker 或 Android SDK Emulator',
+    }),
+  )
+  const tool = createPhoneTools({ service }).find((d) => d.name === 'phone_screenshot')!
+  const value = (await tool.execute({}, {} as never)) as any
+  assert.equal(value.ok, false)
+  assert.equal(value.code, 'E_RUNTIME_UNAVAILABLE')
+  assert.match((value.hints ?? []).join('\n'), /Docker/)
+  assert.ok(
+    Object.keys((tool.output.schema as { properties: Record<string, unknown> }).properties).includes(
+      'hints',
+    ),
+  )
+  const blocks = tool.output.render({}, value as never)
+  assert.match((blocks[0] as { text: string }).text, /E_RUNTIME_UNAVAILABLE/)
+})
+
+test('phone_screenshot：attachment 含 originalDimensions 时只输出 schema 声明字段', async () => {
+  const service = makeService()
+  const attachments = {
+    async saveImage() {
+      return {
+        attachmentId: 'att-2',
+        mediaType: 'image/jpeg' as const,
+        bytes: 9,
+        width: 360,
+        height: 640,
+        name: 'x.jpg',
+        originalDimensions: { width: 720, height: 1280 },
+        extraField: 'should-be-dropped',
+      }
+    },
+  }
+  const tool = createPhoneTools({ service, attachments: () => attachments }).find(
+    (d) => d.name === 'phone_screenshot',
+  )!
+  const value = (await tool.execute({}, {} as never)) as any
+  assert.equal(value.ok, true)
+  assert.deepEqual(value.image, {
+    attachmentId: 'att-2',
+    mediaType: 'image/jpeg',
+    bytes: 9,
+    width: 360,
+    height: 640,
+    name: 'x.jpg',
+    originalDimensions: { width: 720, height: 1280 },
+  })
+  assert.equal('extraField' in value.image, false)
+})
+
 test('phone_screenshot：无 attachments 或保存失败时降级文本、不整体失败', async () => {
   const service = makeService()
   const noService = createPhoneTools({ service }).find((d) => d.name === 'phone_screenshot')!

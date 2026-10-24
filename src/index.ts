@@ -7,10 +7,10 @@
  * 不注册 9 个工具与视频流（开关权仅用户，SPEC §2/§6.4）。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 
+import { AgentTokenStore } from './config/agent-token.ts'
 import { Config as PhoneConfigSchema } from './config/schema.ts'
 import type { PhoneConfig } from './config/schema.ts'
 import type { SettingsFacade } from './config/write.ts'
@@ -20,11 +20,12 @@ import type { ConfigView } from './http/routes.ts'
 import type { AttachmentsLike } from './phone/contracts.ts'
 import type { PhoneService } from './phone/service.ts'
 import { createPhoneService } from './phone/wiring.ts'
-import type { StreamConnectionFence } from './stream/index.ts'
+import type { PhoneStreamService, StreamConnectionFence } from './stream/index.ts'
 import { createStreamUpgradeRoute } from './stream/index.ts'
 import type { ToolHostLike } from './tools/common.ts'
 import { registerPhoneTools } from './tools/index.ts'
-import { evaluateShellCommand } from './tools/shell-policy.ts'
+import type { ShellApprovalHost } from './tools/shell-policy.ts'
+import { registerShellApproval } from './tools/shell-policy.ts'
 
 export const name = 'dsh-phone'
 
@@ -45,6 +46,8 @@ interface WebServerLike {
     path: string
     handler: (req: IncomingMessage, socket: Duplex, head: Buffer) => void
   }): () => void
+  /** 本地监听 origin，如 http://127.0.0.1:3080（写进 agent.json 的 baseUrl）。 */
+  getOrigin?(): string
 }
 
 interface WebHostContext {
@@ -62,23 +65,6 @@ function configView(config: PhoneConfig): ConfigView {
   }
 }
 
-/** phone_shell 审批：非白名单命令返回 ask（waterfall，architecture §2.2）。 */
-function registerShellApproval(ctx: Context): void {
-  ctx.on('tools/pre-execute', async (exec, next) => {
-    if (exec.name !== 'phone_shell') return next()
-    const args = exec.arguments as { cmd?: unknown } | undefined
-    const command = typeof args?.cmd === 'string' ? args.cmd : ''
-    const decision = evaluateShellCommand(command)
-    if (decision.kind === 'allow') return next()
-    const ask: PreToolDecision = {
-      kind: 'ask',
-      reason: decision.reason,
-      displayReason: decision.displayReason,
-    }
-    return ask
-  })
-}
-
 /** ctx 的结构适配（只为测试可注入的 ToolHostLike）。 */
 function toolHost(ctx: Context): ToolHostLike {
   return {
@@ -89,6 +75,17 @@ function toolHost(ctx: Context): ToolHostLike {
         return typeof dispose === 'function' ? dispose : () => undefined
       })
     },
+  }
+}
+
+/** PhoneService → stream 层 PhoneStreamService（touch 命名差异在这里收敛）。 */
+function streamService(service: PhoneService): PhoneStreamService {
+  return {
+    ensureRunning: () => service.ensureRunning(),
+    startStream: (sink) => service.startStream(sink),
+    touch: (action, x, y) => service.touchScreen(action, x, y),
+    inputText: (text) => service.inputText(text),
+    key: (name) => service.key(name),
   }
 }
 
@@ -121,20 +118,33 @@ export function apply(ctx: Context, config: PhoneConfig): void {
   const service: PhoneService = createPhoneService(config)
   ctx.effect(() => () => void service.dispose())
 
-  // 3) tools + phone_shell 审批
+  // 3) tools + phone_shell 审批（非白名单命令走 ask，SPEC §6.3）
   const attachments = (): AttachmentsLike | undefined =>
     ctx.get('attachments') as AttachmentsLike | undefined
-  registerShellApproval(ctx)
+  registerShellApproval(ctx as unknown as ShellApprovalHost)
   registerPhoneTools(toolHost(ctx), { service, attachments })
 
   // 4) http + ws（web carrier 可选：无 webServer 时插件仍提供工具）
   ctx.inject(['webServer'], (webCtx) => {
     const webServer = (webCtx as unknown as WebHostContext).webServer
+
+    // 本地 Agent 通道 token（SPEC §5.2 步骤 6）：loopback + 无 Origin + token。
+    const tokenStore = new AgentTokenStore()
+    const agentReady = tokenStore.prepare(webServer.getOrigin?.() ?? 'http://127.0.0.1')
+    void agentReady.catch(() => undefined)
+    ctx.effect(() => () => {
+      void tokenStore.dispose()
+    })
+
     const api = createApiHandler({
       service,
       getSettings: () => ctx.get('settings') as SettingsFacade | undefined,
       getConnection: () => ctx.get('connection') as ConnectionLike | undefined,
       getConfigView: () => configView(config),
+      agentAuth: async (req) => {
+        await agentReady.catch(() => undefined)
+        return tokenStore.verifyRequest(req)
+      },
       recheckConnectivity: async () => {
         await service.ensureRunning()
         return service.status()
@@ -151,7 +161,7 @@ export function apply(ctx: Context, config: PhoneConfig): void {
     const fence = (): StreamConnectionFence | undefined =>
       ctx.get('connection') as unknown as StreamConnectionFence | undefined
     const route = createStreamUpgradeRoute({
-      service,
+      service: streamService(service),
       getConnection: fence,
       getStreamOptions: () => ({
         maxSize: config.stream.maxSize,

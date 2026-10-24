@@ -41,6 +41,11 @@ export interface ConfigSnapshot {
 
 export interface HttpRouteDeps {
   service: PhoneOperations
+  /**
+   * 本地 Agent 通道鉴权（POST /agent/config）：loopback + 无 Origin + token 匹配。
+   * 返回 true 时绕过 ctx.connection.requestRejection；否则仍走原有校验。
+   */
+  agentAuth?(req: IncomingMessage): Promise<boolean> | boolean
   getSettings(): SettingsFacade | undefined
   getConnection(): ConnectionLike | undefined
   /** 非 volatile 配置（runtime/stream）的实时读取。 */
@@ -165,6 +170,13 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
     if (!('value' in body)) {
       throw new ApiError(400, 'E_BAD_REQUEST', '缺少 value 字段')
     }
+    // 字段类型校验：错误必须 400（不能被 ConfigWriteError 映射成 503）
+    if (pathKey(path) === 'attach.userHint' && typeof body.value !== 'string') {
+      throw new ApiError(400, 'E_BAD_REQUEST', 'attach.userHint 必须是字符串')
+    }
+    if (pathKey(path) === 'attach.resolved' && typeof body.value !== 'boolean') {
+      throw new ApiError(400, 'E_BAD_REQUEST', 'attach.resolved 必须是布尔值')
+    }
     const revision = body.revision
     if (revision !== undefined && (typeof revision !== 'number' || !Number.isInteger(revision))) {
       throw new ApiError(400, 'E_BAD_REQUEST', 'revision 必须是整数')
@@ -232,17 +244,24 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const rejection = rejectionFor(deps.getConnection(), req)
-    if (rejection) {
-      sendRejection(res, rejection)
-      return
-    }
     try {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
       const rawPath = url.pathname.startsWith(API_PREFIX)
         ? url.pathname.slice(API_PREFIX.length) || '/'
         : url.pathname
       const method = (req.method ?? 'GET').toUpperCase()
+      const isAgentConfig = method === 'POST' && rawPath === '/agent/config'
+
+      const rejection = rejectionFor(deps.getConnection(), req)
+      if (rejection) {
+        const agentOk = isAgentConfig && deps.agentAuth !== undefined
+          ? await deps.agentAuth(req)
+          : false
+        if (!agentOk) {
+          sendRejection(res, rejection)
+          return
+        }
+      }
 
       if (method === 'GET' && rawPath === '/status') {
         sendSuccess(res, await deps.service.status())
@@ -253,6 +272,10 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
         return
       }
       if (method === 'POST' && rawPath === '/config') {
+        await handleConfigWrite(req, res)
+        return
+      }
+      if (isAgentConfig) {
         await handleConfigWrite(req, res)
         return
       }

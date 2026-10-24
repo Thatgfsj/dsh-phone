@@ -72,7 +72,7 @@ export function makeService(overrides: Partial<PhoneOperations> = {}): FakeServi
     },
     dumpUi: () => call('dumpUi', '<hierarchy><node bounds="[0,0][720,1280]"/></hierarchy>'),
     shell: (command) => call('shell:' + command, 'model=TestPhone'),
-    touch: async (action, x, y) => {
+    touchScreen: async (action, x, y) => {
       await call('touch:' + action + ':' + x + ',' + y, undefined)
     },
     verifyEndpoint: () => call('verifyEndpoint', { ok: true, latencyMs: 3 } as VerifyResult),
@@ -92,7 +92,7 @@ export function makeAttachments(options: { fail?: boolean } = {}): AttachmentsLi
     state.saved += 1
     return {
       attachmentId: 'att-' + state.saved,
-      mediaType: 'image/png',
+      mediaType: 'image/png' as const,
       bytes: 7,
       width: 720,
       height: 1280,
