@@ -28,7 +28,7 @@ test('帧头 magic 为 ASCII DPH1', () => {
 
 test('meta 为大端 u32：高 4 bit 类型 + 低 28 bit pts', () => {
   const header = encodeFrameHeader(FRAME_TYPE.configuration, 0x0abcdef)
-  assert.deepEqual([...header.subarray(4)], [0x00, 0x0a, 0xbc, 0xde])
+  assert.deepEqual([...header.subarray(4)], [0x00, 0xab, 0xcd, 0xef])
   const key = encodeFrameHeader(FRAME_TYPE.keyframe, 1)
   assert.equal(key[4], 0x10)
   const delta = encodeFrameHeader(FRAME_TYPE.delta, 0x0fffffff)
