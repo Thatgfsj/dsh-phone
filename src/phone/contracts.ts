@@ -5,9 +5,9 @@
  * 这里只放 host 侧消费的接口，实现分别属于 runtime（#3）与 stream（#5）两个 PR；
  * runtime/stream 尚未合并时，单测用假实现注入（tests/host/*）。
  */
-import type { Endpoint, PhoneState, RuntimeKind } from '../runtime/types.ts'
+import type { BootPhase, Endpoint, PhoneState, RuntimeKind } from '../runtime/types.ts'
 
-export type { Endpoint, PhoneState, RuntimeKind }
+export type { BootPhase, Endpoint, PhoneState, RuntimeKind }
 
 export type Platform = 'linux' | 'windows' | 'macos' | 'other'
 
@@ -20,6 +20,8 @@ export interface PhoneStatus {
   memPct?: number
   uptimeMs?: number
   bootMs?: number
+  /** booting 时的进度阶段（issue #56，可选，向后兼容）。 */
+  phase?: BootPhase
   endpoint?: Endpoint
   lastError?: string
 }
