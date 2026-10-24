@@ -10,7 +10,9 @@
 src/client/
   index.ts      入口：export default function(require) → { name, inject, apply }
   panel.ts      右侧栏 tab body（canvas/状态/重连/按键）+ 标题 seat 组件
-  settings.ts    设置页（一句话/解析状态/重置/打开面板）
+  settings.ts    设置页（onboarding 卡片/一句话/解析状态/重置/打开面板）
+  settings-api.ts HTTP 客户端 + 409 冲突重试 + onboarding 类型 + 状态容错读取
+  onboarding.ts  首次使用引导：三态描述 + 写入流程（纯函数）+ 卡片组件
   connection.ts  协议编解码 + 指数退避 + 可见性双检测门控（纯逻辑）
   stream.ts      WebSocket 生命周期：握手、重连、心跳、半开检测
   decoder.ts     解码编排：WebCodecs → 软解回退
@@ -138,7 +140,51 @@ esbuild 会把 `import.meta` 置空（运行期 `new URL(..., undefined)` 抛错
 二者都为真才可见；变化经 `StreamClient.setVisible`：不可见立即 `close(1000)` 并清空定时器，
 可见时立即重连（`hello.visible=true`）。Host 侧据此把 viewer 计数归零并停流。
 
-## 5. 测试与自检
+## 5. 首次使用引导（onboarding，issue #31）
+
+配合 Host 侧 onboarding 守卫（issue #30）。契约：
+
+- `GET /dsh-phone/api/config` 的 value 增加
+  `onboarding: { status:'pending'|'accepted'|'declined', choice:''|'emulator'|'redroid'|'attach' }`
+  （客户端把字段视为可选：缺失时按 `accepted` 处理，兼容旧 Host）。
+- `POST /dsh-phone/api/config` 新增可写路径 `onboarding.status` / `onboarding.choice`
+  （body 仍是 `{path,value,revision}`）。
+- `GET /status` 在 pending 时返回 200 + `{ok:false,error:{code:'E_ONBOARDING_REQUIRED'}}`；
+  `readRunStatus()` 把该码与 `E_NO_WEB`/`E_RUNTIME_UNAVAILABLE` 视为「暂无状态」，
+  设置页不因此报错（面板不依赖 `/status`）。
+
+三态（`describeOnboarding()` 纯函数，单测覆盖）：
+
+| status | 显示 |
+|---|---|
+| `pending` | 引导卡片：标题/说明（运行中约 2GB 内存 + CPU）/「插件不会自动安装」提示；四个入口：SDK Emulator（展示 `sdkmanager ...`，约 1.7GB）、redroid（展示 binder 命令）、连接已有实例、暂不使用；此时隐藏一句话/解析/重置区域 |
+| `accepted` | 「已启用：<choice>」+ 重新选择按钮，并显示原有 userHint/endpoint/resolved/运行状态区域 |
+| `declined` | 「已暂停使用」（不启动实例、不占资源）+ 重新启用按钮；隐藏原区域 |
+
+写入流程（`acceptOnboarding` / `declineOnboarding` / `reopenOnboarding`，均为纯函数）：
+
+- accept：先写 `onboarding.choice`，用返回的**新 revision** 再写 `onboarding.status='accepted'`；
+- decline：写 `onboarding.status='declined'`；
+- 重新启用/重新选择：写 `onboarding.status='pending'`（保留 choice）；
+- 每一步都走 `writeWithConflictRetry`：409 时重新 GET 配置、用新 revision 重试一次，再失败显示可读错误；
+- **插件不安装任何软件**：卡片只展示命令文本，由用户在终端执行（SPEC §6.4）。
+
+单测（`tests/client/onboarding.test.ts`，fake api + mock fetch）：三态描述、choice→i18n 映射、
+accept 两步写入与 revision 传递、409 重试后继续写、decline/reopen、非 409 错误透传、
+`GET /config` onboarding 解析、`readRunStatus` 对 `E_ONBOARDING_REQUIRED` 的容错、POST body 形状。
+
+人工验证清单（真实页面由 #8 验收；`docs/verification.md` 由 #8 维护，以下为其素材）：
+
+1. 首次安装（无 onboarding 记录）打开 设置→手机：显示 pending 卡片，文字与命令可读，四个按钮可用。
+2. 点「使用 SDK Emulator」→「已启用：Android SDK Emulator」+ 原区域出现；GET /config 为 `accepted/emulator`。
+3. redroid / attach 各验证一次：choice 写入正确、两步写入无 409 死循环。
+4. 点「暂不使用」→「已暂停使用」+ 重新启用；刷新页面仍保持 declined。
+5. 点「重新启用」→ 回到 pending 卡片，可重新选择。
+6. 人为制造旧 revision（另一标签页先改配置）→ 自动刷新并重试一次后保存成功。
+7. pending 时 GET /status 返回 `E_ONBOARDING_REQUIRED`：设置页仍正常渲染（不显示致命错误）。
+8. 明暗主题下卡片/命令块可读（仅 `--dsw-alias-*` token）。
+
+## 6. 测试与自检
 
 ```sh
 npm run typecheck   # tsc --noEmit
@@ -151,8 +197,7 @@ node scripts/check-file-lines.mjs
 重连退避与抖动、可见性门控、不可见断流（`close(1000)`、无重连）、心跳半开重连、
 设备坐标换算（letterbox/夹取）、WebCodecs configure/chunk 参数、codec string、I420→RGBA、软解真实关键帧。
 
-## 6. 未验证项（真实浏览器 / 真实 Host 待 task-8）
-
+## 7. 未验证项（真实浏览器 / 真实 Host 待 task-8）
 1. WebCodecs 在 Chrome/Firefox/Safari 对 `avc.format='annexb'` + in-band SPS/PPS 的接受度；
    Chromium 对 Annex-B chunk 的接受度本机未在真实浏览器验证（协议 §2.2 只冻结了
    「configuration 置 description」，本实现改用 `avc.format=annexb` + in-band SPS/PPS，需真实页面确认）。
@@ -162,3 +207,5 @@ node scripts/check-file-lines.mjs
 4. 设置页 `fetch` 与 DSH 同源 cookie 鉴权的端到端写入（含 409 重试）未在真实 Host 跑过。
 5. 软解回退发生在流中途时，等待下一个关键帧的实际时延（取决于 scrcpy 关键帧间隔）。
 6. 面板真实渲染（主题 token、明暗切换、画布尺寸）未验证——task-8 负责。
+
+7. onboarding 三态与写入（含 409 重试、`E_ONBOARDING_REQUIRED` 容错）只有单测；真实页面交互未验证（#8）。

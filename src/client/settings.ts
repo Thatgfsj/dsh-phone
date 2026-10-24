@@ -10,8 +10,9 @@
 import type * as ReactNamespace from 'react'
 import type { Translate } from './panel.ts'
 import { CLIENT_CSS } from './styles.ts'
-import { ConfigApiError, createFetchConfigApi, messageOf, writeWithConflictRetry } from './settings-api.ts'
+import { ConfigApiError, createFetchConfigApi, messageOf, readRunStatus, writeWithConflictRetry } from './settings-api.ts'
 import type { ConfigApi, PhoneConfigView, PhoneStatusView } from './settings-api.ts'
+import { choiceLabelKey, createOnboardingCard, describeOnboarding } from './onboarding.ts'
 
 export interface SettingsDeps {
   React: typeof ReactNamespace
@@ -26,6 +27,7 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
   const { React, t } = deps
   const h = React.createElement
   const api = deps.api ?? createFetchConfigApi()
+  const OnboardingCard = createOnboardingCard({ React, t })
 
   function PhoneSettings(): ReactNamespace.ReactElement {
     const [config, setConfig] = React.useState<PhoneConfigView>()
@@ -41,7 +43,7 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
       try {
         const [next, state] = await Promise.all([
           api.getConfig(),
-          api.getStatus().catch(() => undefined),
+          readRunStatus(api).catch(() => undefined),
         ])
         if (!aliveRef.current) return next
         setConfig(next)
@@ -103,6 +105,7 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
       }
     }
 
+    const mode = describeOnboarding(config)
     const rows: { label: string; value: string }[] = []
     if (config !== undefined) {
       rows.push({
@@ -114,6 +117,7 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
         value: config.attach.endpoint === '' ? t('settings.state.endpointNone') : config.attach.endpoint,
       })
       rows.push({ label: t('settings.state.runtime'), value: config.runtime })
+      rows.push({ label: t('settings.state.onboarding'), value: t(choiceLabelKey(mode.choice)) })
     }
     if (status !== undefined) {
       rows.push({ label: t('settings.state.runState'), value: status.state })
@@ -136,9 +140,24 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
       h('p', { className: 'dshp-hint', style: { margin: 0 } }, t('settings.description')),
       loading ? h('p', { className: 'dshp-hint' }, t('settings.loading')) : null,
       error === undefined ? null : h('p', { className: 'dshp-error' }, error),
-      h(
-        'div',
-        { className: 'dshp-field' },
+      config === undefined
+        ? null
+        : h(OnboardingCard, {
+            key: 'onboarding',
+            api,
+            config,
+            reload: load,
+            onConfig: (next: PhoneConfigView) => {
+              setConfig(next)
+              setDraft(next.attach.userHint)
+            },
+            onMessage: (text: string) => setMessage(text),
+            onError: (text: string | undefined) => setError(text),
+          }),
+      mode.showSetup
+        ? h(
+            'div',
+            { className: 'dshp-field' },
         h('label', { htmlFor: 'dshp-user-hint' }, t('settings.hint.label')),
         h('textarea', {
           id: 'dshp-user-hint',
@@ -174,8 +193,9 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
           ),
           message === undefined ? null : h('span', { className: 'dshp-hint' }, message),
         ),
-      ),
-      rows.length === 0
+      )
+        : null,
+      !mode.showSetup || rows.length === 0
         ? null
         : h(
             'dl',
@@ -185,15 +205,16 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
               h('dd', { key: `${row.label}-dd` }, row.value),
             ]),
           ),
-      h(
-        'div',
-        { className: 'dshp-row' },
-        h(
-          'button',
-          {
-            type: 'button',
-            className: 'dshp-button',
-            onClick: () => void onReset(),
+      mode.showSetup
+        ? h(
+            'div',
+            { className: 'dshp-row' },
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dshp-button',
+                onClick: () => void onReset(),
             disabled: loading || busy !== undefined,
           },
           busy === 'reset' ? t('settings.hint.saving') : t('settings.reset'),
@@ -203,7 +224,8 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
           { type: 'button', className: 'dshp-button', onClick: deps.openPanel },
           t('settings.openPanel'),
         ),
-      ),
+      )
+        : null,
     )
   }
 

@@ -69,4 +69,20 @@ export const CLIENT_CSS = `
 .dshp-kv dd { margin: 0; word-break: break-all; }
 .dshp-section { display: flex; flex-direction: column; gap: 12px; padding: 4px 0; }
 .dshp-sep { height: 1px; background: var(--dsw-alias-border-secondary); }
+.dshp-card {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; border-radius: 8px;
+  background: var(--dsw-alias-bg-primary);
+  border: 1px solid var(--dsw-alias-border-secondary);
+}
+.dshp-card[data-state='pending'] { border-color: var(--dsw-alias-border-accent); }
+.dshp-card-title { margin: 0; font-size: 13px; }
+.dshp-options { display: flex; flex-direction: column; gap: 10px; }
+.dshp-option { display: flex; flex-direction: column; gap: 4px; }
+.dshp-command {
+  display: block; margin: 2px 0; padding: 6px 8px; border-radius: 6px;
+  background: var(--dsw-alias-bg-tertiary); color: var(--dsw-alias-text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  white-space: pre-wrap; word-break: break-all;
+}
 `
