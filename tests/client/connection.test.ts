@@ -420,3 +420,34 @@ test('StreamClient: auth close 1008 is terminal, reported and never retried', ()
   assert.equal(FakeSocket.instances.length, 1, 'no reconnect after an auth rejection')
 })
 
+test('StreamClient: a reconnect drops the previous connection error frame', () => {
+  FakeSocket.instances.length = 0
+  const clock = new FakeClock()
+  const errors: { code: string; message: string }[] = []
+  const client = new StreamClient({
+    createSocket: (url) => new FakeSocket(url),
+    now: () => clock.now,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    backoff: new ReconnectBackoff({ random: () => 0.5 }),
+    onFrame: () => {},
+    onMessage: () => {},
+    onState: () => {},
+    onError: (failure) => errors.push({ code: failure.code, message: failure.message }),
+  })
+  client.start(true)
+  const first = FakeSocket.at(0)
+  first.open()
+  // A retryable error frame keeps the socket open but records its message.
+  first.deliver('{"type":"error","code":"E_STREAM_START_FAILED","message":"old boom","retryable":true}')
+  first.shutdown(1006)
+  clock.advance(500)
+  assert.equal(FakeSocket.instances.length, 2, 'reconnected after backoff')
+  const second = FakeSocket.at(1)
+  second.open()
+  // The fresh socket dies with the auth close code: report the generic auth
+  // failure, not the error frame captured on the previous connection.
+  second.shutdown(1008)
+  assert.deepEqual(errors, [{ code: 'E_AUTH', message: 'unauthorized' }])
+})
+
