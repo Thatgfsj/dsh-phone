@@ -24,7 +24,7 @@
 | 方法 | 路径 | 请求体 | 成功 `value` |
 |---|---|---|---|
 | GET | `/dsh-phone/api/status` | — | `PhoneStatus`（见 §1.1）；onboarding pending/declined → **200** `{ok:false,error:{code:'E_ONBOARDING_*',...}}`（见 §1.2） |
-| GET | `/dsh-phone/api/config` | — | `{ runtime, onboarding:{status,choice}, attach:{endpoint,userHint,resolved}, stream:{maxSize,maxFps,bitrate}, revision }` |
+| GET | `/dsh-phone/api/config` | — | `{ enabled, runtime, onboarding:{status,choice}, attach:{endpoint,userHint,resolved}, stream:{maxSize,maxFps,bitrate}, revision }`（`enabled` 只读，见 §1.3） |
 | POST | `/dsh-phone/api/config` | `{ path:['attach','userHint'], value, revision }`（也接受 `onboarding.status` / `onboarding.choice`） | 同上（写后回读，R4） |
 | POST | `/dsh-phone/api/attach/verify` | `{ endpoint:'127.0.0.1:5555' }` | `{ ok:boolean, latencyMs, banner?:string }`（**不落盘**，R5） |
 | GET | `/dsh-phone/api/screenshot` | — | PNG 字节（`image/png`，非 JSON 包装） |
@@ -66,6 +66,15 @@ interface PhoneStatus {
   （`error.onboarding` 含 step/question/options/install/docs），面板可展示引导而不报错。
 - accepted 且 `choice` 非空 → 等价显式 `runtime=choice`（只走该 kind）；choice 空 → auto 决策树；
   运行时不可用仍返回 503 `E_RUNTIME_UNAVAILABLE`。
+
+### 1.3 enabled 只读字段（issue #52）
+
+`GET /config` 的 `value.enabled` 来自 `Config.enabled`（非 volatile；变更需重载插件）：
+
+- 主 handler（插件启用）与只读 handler（`enabled=false` 时仅注册 GET /config）返回**同一形状**，
+  客户端可据此显示「已启用 / 已关闭（只读）」并整体禁用写入区；
+- 该字段**只读**：`POST /config` / `POST /agent/config` 均不接受 `enabled` 路径（400 `E_BAD_PATH`）；
+- 旧 Host 兼容：客户端按「缺省视为 true / 或按自身默认」处理（客户端侧实现）。
 
 ## 2. WebSocket `/dsh-phone/stream`
 
