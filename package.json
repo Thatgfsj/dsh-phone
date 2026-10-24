@@ -63,8 +63,8 @@
     "@yume-chan/adb": "^2.6.4",
     "@yume-chan/adb-scrcpy": "^2.3.2",
     "@yume-chan/scrcpy": "^2.3.0",
-    "@yume-chan/scrcpy-decoder-tinyh264": "^2.1.0",
-    "@yume-chan/stream-extra": "^2.6.1"
+    "@yume-chan/stream-extra": "^2.6.1",
+    "tinyh264": "^0.0.7"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.5",
