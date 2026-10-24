@@ -64,7 +64,12 @@ export function isValidEndpointString(value: unknown): value is string {
   return Number.isInteger(port) && port > 0 && port <= 65535
 }
 
-function configSnapshot(deps: HttpRouteDeps): ConfigSnapshot {
+interface SnapshotSource {
+  getSettings(): SettingsFacade | undefined
+  getConfigView(): ConfigView
+}
+
+function configSnapshot(deps: SnapshotSource): ConfigSnapshot {
   const descriptor = describeEntry(deps.getSettings())
   const attach = (readPath(descriptor.value, ['attach']) ?? {}) as Record<string, unknown>
   const view = deps.getConfigView()
@@ -267,4 +272,38 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
   }
 
   return { handle }
+}
+/** enabled=false 时设置页需要的只读路由：仅 GET /config（不注册工具/流/写接口）。 */
+export interface ReadOnlyRouteDeps extends SnapshotSource {
+  getConnection(): ConnectionLike | undefined
+}
+
+export function createReadOnlyHandler(deps: ReadOnlyRouteDeps): HttpRouteHandler {
+  return {
+    async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      const rejection = rejectionFor(deps.getConnection(), req)
+      if (rejection) {
+        sendRejection(res, rejection)
+        return
+      }
+      try {
+        const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+        const rawPath = url.pathname.startsWith(API_PREFIX)
+          ? url.pathname.slice(API_PREFIX.length) || '/'
+          : url.pathname
+        if ((req.method ?? 'GET').toUpperCase() === 'GET' && rawPath === '/config') {
+          sendSuccess(res, configSnapshot(deps))
+          return
+        }
+        throw new ApiError(
+          403,
+          'E_NO_WEB',
+          '插件开关已关闭（dsh-phone.enabled=false）：只提供只读配置查询；开关变更权属于用户',
+        )
+      } catch (error) {
+        const apiError = toApiError(error)
+        sendError(res, apiError.status, apiError.code, apiError.message, apiError.retryable)
+      }
+    },
+  }
 }
