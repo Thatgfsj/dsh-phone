@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Fat Fish's Phone",
+    "description": "An Android instance running behind DSH, shown in the browser right sidebar and driven by the Agent through phone_* tools."
+  }
+}

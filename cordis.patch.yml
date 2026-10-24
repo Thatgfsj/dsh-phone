@@ -1,0 +1,6 @@
+# dsh-phone bundle patch layer.
+# Host 插件行；name 用包名，由 Node 解析到 exports["."]（见 package.json）。
+- insert:
+    - id: dsh-phone
+      name: dsh-phone
+      config: {}
