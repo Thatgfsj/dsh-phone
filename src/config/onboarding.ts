@@ -10,6 +10,8 @@
  * - `choice: '' | 'emulator' | 'redroid' | 'attach'`（默认 ''）
  * 旧配置没有该段时由 schema 默认值补齐为 pending（升级后首次仍会询问）。
  */
+import { createOnboardingInstallPayload } from '../runtime/install-guide.ts'
+import type { OnboardingInstallCommands } from '../runtime/install-guide.ts'
 import type { RuntimeSetting } from '../runtime/types.ts'
 
 export const ONBOARDING_STATUS_VALUES = ['pending', 'accepted', 'declined'] as const
@@ -69,32 +71,14 @@ export const ONBOARDING_OPTIONS: readonly OnboardingOption[] = [
   },
 ]
 
-export interface OnboardingInstallGuide {
-  emulator: { commands: string[]; size: string }
-  redroid: { commands: string[] }
-  attach: { hint: string }
-}
+/** install 载荷形状（数据源：src/runtime/install-guide.ts）。 */
+export type OnboardingInstallGuide = OnboardingInstallCommands
 
-export const ONBOARDING_INSTALL: OnboardingInstallGuide = {
-  emulator: {
-    commands: [
-      '安装 Android Studio（含 SDK Emulator）：https://developer.android.com/studio',
-      '在 Device Manager 创建 AVD（或让插件首次自动创建）',
-      'Linux 需确认 /dev/kvm 存在；Windows 需开启 WHPX/Hyper-V',
-    ],
-    size: '~1.7GB',
-  },
-  redroid: {
-    commands: [
-      '安装 Docker Engine：https://docs.docker.com/engine/install/',
-      'sudo modprobe binder_linux devices="binder,hwbinder,vndbinder"',
-      '确认 /dev/binder 存在后再重试',
-    ],
-  },
-  attach: {
-    hint: '填 attach.endpoint（如 127.0.0.1:5555）：在模拟器/真机开启 adb TCP 调试后，用设置页或本地 Agent 通道写入。',
-  },
-}
+/**
+ * 安装命令由 src/runtime/install-guide.ts 统一提供（issue #38：detect 提示 /
+ * onboarding 载荷 / 客户端卡片共用同一数据源，避免文案漂移）。只展示、不执行（SPEC 6.4）。
+ */
+export const ONBOARDING_INSTALL: OnboardingInstallGuide = createOnboardingInstallPayload()
 
 export interface OnboardingPayload {
   step: 'consent' | 'choose-runtime'

@@ -12,6 +12,7 @@
  */
 
 import { AttachRuntime } from './attach.ts'
+import { installGuideHints } from './install-guide.ts'
 import { EmulatorRuntime } from './emulator.ts'
 import { RedroidRuntime } from './redroid.ts'
 import {
@@ -19,6 +20,13 @@ import {
   formatEndpoint,
   parseEndpoint,
 } from './types.ts'
+export {
+  installGuide,
+  installGuideData,
+  installGuideHints,
+  sdkmanagerPath,
+} from './install-guide.ts'
+
 import type {
   DetectionStep,
   Platform,
@@ -29,47 +37,6 @@ import type {
   RuntimeKind,
   RuntimeOptions,
 } from './types.ts'
-
-/** 平台对应的安装/启用指引（步骤 4：禁止静默失败）。 */
-export function installGuide(platform: Platform): string {
-  if (platform === 'linux') {
-    return [
-      'Linux 推荐路径：',
-      '  A) redroid（Docker，首选）：',
-      '     1. 安装 Docker Engine（自行安装，插件不会替你装）：https://docs.docker.com/engine/install/',
-      '     2. 加载 binder 模块：sudo modprobe binder_linux devices="binder,hwbinder,vndbinder"',
-      '     3. 确认设备节点存在：ls -l /dev/binder',
-      '  B) Android SDK Emulator：',
-      '     1. 安装 Android Studio / SDK Emulator：https://developer.android.com/studio',
-      '     2. 确认 CPU 虚拟化可用：ls -l /dev/kvm（无 KVM 时性能很差）',
-      '  C) attach 外部实例：在插件设置里填 attach.endpoint（如 127.0.0.1:5555）',
-    ].join('\n')
-  }
-  if (platform === 'windows') {
-    return [
-      'Windows 推荐路径：',
-      '  A) Android SDK Emulator（首选）：',
-      '     1. 安装 Android Studio / SDK Emulator：https://developer.android.com/studio',
-      '     2. 开启 Windows 功能“虚拟机平台”/“Hyper-V”，并在 BIOS 打开虚拟化（WHPX）',
-      '     3. 在 Android Studio 里创建 AVD，或在配置里填 emulator.avdName',
-      '  B) attach 外部实例（雷电/夜神/MuMu/真机）：先在设置里填 attach.endpoint',
-      '  注：WSL2 + redroid 属进阶路径，默认不推荐（见 docs/runtime.md）',
-    ].join('\n')
-  }
-  if (platform === 'macos') {
-    return [
-      'macOS 推荐路径：',
-      '  A) Android SDK Emulator（首选，Hypervisor.framework 默认可用）：',
-      '     1. 安装 Android Studio / SDK Emulator：https://developer.android.com/studio',
-      '     2. 创建 AVD，或在配置里填 emulator.avdName',
-      '  B) attach 外部实例：在设置里填 attach.endpoint（如 127.0.0.1:5555）',
-    ].join('\n')
-  }
-  return [
-    '当前平台不受支持（redroid 需 Linux，emulator 需 Linux/Windows/macOS）。',
-    '可改用 attach：在设置里填 attach.endpoint（如 127.0.0.1:5555）连接已有实例。',
-  ].join('\n')
-}
 
 /** 主机上是否存在可用且已授权的 emulator（供 status 显示，不改变决策）。 */
 export function createRuntimeAdapter(
@@ -180,7 +147,7 @@ export async function detectRuntime(
   const hints = [
     ...steps.map((step) => `- ${step.step}: ${step.detail}`),
     '',
-    ...installGuide(platform).split('\n'),
+    ...installGuideHints(platform),
   ]
   throw new RuntimeUnavailableError(preferredRuntime(platform), hints, undefined, {
     platform,

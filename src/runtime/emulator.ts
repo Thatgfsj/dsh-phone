@@ -10,6 +10,7 @@
 import { dirname, join } from 'node:path'
 
 import { waitUntil } from '../adb/timing.ts'
+import { AVD_NAME, SYSTEM_IMAGE } from './install-guide.ts'
 import { DEFAULT_EMULATOR_BOOT_TIMEOUT_MS, DEFAULT_RUNTIME_OPTIONS } from './types.ts'
 import { RuntimeError } from './types.ts'
 import { DEFAULT_ADB_HOST, DEFAULT_ADB_PORT, formatEndpoint } from './types.ts'
@@ -176,9 +177,9 @@ export class EmulatorRuntime implements RuntimeAdapter {
   }
 
   async #createAvd(emulatorPath: string): Promise<string> {
-    const name = 'dsh-phone-avd'
+    const name = AVD_NAME
     const systemImage =
-      this.#options.systemImage ?? 'system-images;android-34;google_apis;x86_64'
+      this.#options.systemImage ?? SYSTEM_IMAGE
     const sdkRoot = dirname(dirname(emulatorPath))
     const avdmanager = join(sdkRoot, 'cmdline-tools', 'latest', 'bin', 'avdmanager')
     const result = await this.#runner.run(

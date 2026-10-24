@@ -16,6 +16,7 @@
  */
 import type * as ReactNamespace from 'react'
 import type { Translate } from './panel.ts'
+import { ONBOARDING_INSTALL_COMMANDS } from '../runtime/install-guide.ts'
 import { messageOf, writeWithConflictRetry, type ConfigApi, type OnboardingChoice, type PhoneConfigView } from './settings-api.ts'
 
 /** Which surface the settings page shows for a config. */
@@ -125,11 +126,9 @@ export async function reopenOnboarding(
   return writeSequence(api, [{ path: ['onboarding', 'status'], value: 'pending' }], revision, reload)
 }
 
-/** Install hints are informational; the plugin never runs them. */
-export const INSTALL_COMMANDS = {
-  emulator: 'sdkmanager "emulator" "system-images;android-34;google_apis;x86_64"',
-  redroid: 'modprobe binder_linux devices="binder,hwbinder,vndbinder"',
-} as const
+/** Install hints are informational; the plugin never runs them.
+ * 数据源：src/runtime/install-guide.ts（与 detect hints / onboarding 载荷共用，issue #38）。 */
+export const INSTALL_COMMANDS = ONBOARDING_INSTALL_COMMANDS
 
 export interface OnboardingCardProps {
   api: WriteApi
