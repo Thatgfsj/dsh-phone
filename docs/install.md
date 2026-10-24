@@ -1,6 +1,6 @@
 # 安装、升级与卸载
 
-> 适用于 dsh-phone v0.1.0（发布准备中）。DSH 版本要求：`>=0.2.1-rc.2 <0.3.0`；Node `>=20`。
+> 适用于 dsh-phone v0.1.0（已发布）。DSH 版本要求：`>=0.2.1-rc.2 <0.3.0`；Node `>=20`。
 > 安装类问题先看 [troubleshooting.md](troubleshooting.md)。
 
 ## 0. 前置条件
