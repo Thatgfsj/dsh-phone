@@ -50,6 +50,7 @@ export function readServiceConfig(config: PhoneConfig): ServiceConfig {
   const onboarding = readOnboarding(config)
   return {
     runtime: effectiveRuntime(config.runtime, onboarding),
+    onboarding,
     attach: {
       endpoint: config.attach.endpoint.get(),
       userHint: config.attach.userHint.get(),
