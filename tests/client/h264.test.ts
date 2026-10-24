@@ -1,7 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { buildAvcC, codecStringFromConfig, nalType, splitAnnexB } from '../../src/client/h264.ts'
+import {
+  codecStringFromConfig,
+  nalType,
+  splitAnnexB,
+  webCodecsChunk,
+  webCodecsConfig,
+} from '../../src/client/h264.ts'
 import { i420ToRgba } from '../../src/client/yuv.ts'
 
 /** Annex-B byte stream: first unit gets a 4-byte start code, the rest get 3. */
@@ -34,35 +40,50 @@ test('splitAnnexB returns nothing for a packet without start codes', () => {
   assert.deepEqual(splitAnnexB(Uint8Array.from([1, 2, 3, 4])), [])
 })
 
-test('buildAvcC wraps SPS/PPS in an AVCDecoderConfigurationRecord', () => {
-  const record = buildAvcC(annexB([sps, pps]))
-  assert.ok(record)
-  assert.equal(record.length, 11 + sps.length + pps.length)
-  assert.equal(record[0], 1, 'configurationVersion')
-  assert.equal(record[1], 0x42, 'profile from SPS')
-  assert.equal(record[2], 0xe0, 'constraint flags from SPS')
-  assert.equal(record[3], 0x1e, 'level from SPS')
-  assert.equal(record[4], 0xff, 'lengthSizeMinusOne = 3')
-  assert.equal(record[5], 0xe1, 'one SPS')
-  const spsLength = (record[6]! << 8) | record[7]!
-  assert.equal(spsLength, sps.length)
-  assert.deepEqual([...record.subarray(8, 8 + spsLength)], sps)
-  const ppsOffset = 8 + spsLength
-  assert.equal(record[ppsOffset], 1)
-  assert.equal((record[ppsOffset + 1]! << 8) | record[ppsOffset + 2]!, pps.length)
-  assert.deepEqual([...record.subarray(ppsOffset + 3)], pps)
-})
-
-test('buildAvcC refuses packets missing SPS or PPS', () => {
-  assert.equal(buildAvcC(annexB([sps])), undefined)
-  assert.equal(buildAvcC(annexB([pps])), undefined)
-  assert.equal(buildAvcC(Uint8Array.from([0, 0, 1, 0x67])), undefined)
-  assert.equal(buildAvcC(new Uint8Array()), undefined)
-})
-
 test('codecStringFromConfig reads profile/constraints/level from the SPS', () => {
   assert.equal(codecStringFromConfig(annexB([sps, pps])), 'avc1.42E01E')
   assert.equal(codecStringFromConfig(annexB([pps])), undefined)
+})
+
+test('webCodecsConfig asks for Annex-B and never sets a description', () => {
+  const options = webCodecsConfig(annexB([sps, pps]))
+  assert.ok(options)
+  assert.deepEqual(options, {
+    codec: 'avc1.42E01E',
+    avc: { format: 'annexb' },
+    optimizeForLatency: true,
+  })
+  assert.equal('description' in options, false, 'description would force AVCC framing')
+  assert.equal(webCodecsConfig(annexB([pps])), undefined)
+})
+
+test('webCodecsChunk prepends the configuration packet to the first keyframe', () => {
+  const config = annexB([sps, pps])
+  const keyPayload = annexB([idr])
+  const frame = { type: 'keyframe' as const, ptsMicros: 1_000_000, payload: keyPayload }
+  const chunk = webCodecsChunk(frame, config)
+  assert.ok(chunk)
+  assert.equal(chunk.type, 'key')
+  assert.equal(chunk.timestamp, 1_000_000)
+  assert.equal(chunk.data.length, config.length + keyPayload.length)
+  assert.deepEqual([...chunk.data.subarray(0, config.length)], [...config])
+  assert.deepEqual([...chunk.data.subarray(config.length)], [...keyPayload])
+})
+
+test('webCodecsChunk leaves delta frames untouched and carries the pts timestamp', () => {
+  const deltaPayload = annexB([[0x41, 0x9a, 0x00]])
+  const chunk = webCodecsChunk({ type: 'delta', ptsMicros: 500_000, payload: deltaPayload }, Uint8Array.from([9]))
+  assert.ok(chunk)
+  assert.equal(chunk.type, 'delta')
+  assert.equal(chunk.timestamp, 500_000)
+  assert.deepEqual([...chunk.data], [...deltaPayload], 'no configuration prefix on delta frames')
+})
+
+test('webCodecsChunk ignores non-video frame types', () => {
+  const payload = annexB([[0x67, 0x00]])
+  for (const type of ['configuration', 'audio', 'control'] as const) {
+    assert.equal(webCodecsChunk({ type, ptsMicros: 0, payload }), undefined)
+  }
 })
 
 test('i420ToRgba converts black and white correctly', () => {
@@ -71,7 +92,6 @@ test('i420ToRgba converts black and white correctly', () => {
   assert.deepEqual([...i420ToRgba(black, 2, 2)!], [
     0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255,
   ])
-  // 1x1 white (Y=235).
   const white = i420ToRgba(Uint8Array.from([235, 128, 128]), 1, 1)!
   assert.deepEqual([...white], [255, 255, 255, 255])
 })

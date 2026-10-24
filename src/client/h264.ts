@@ -2,10 +2,18 @@
  * H.264 Annex-B helpers shared by both decode paths (docs/protocol.md §2.2).
  *
  * The Host forwards scrcpy's H.264 byte stream untouched, so the client has to
- * turn the configuration packet (SPS/PPS in Annex-B form) into the AVC decoder
- * configuration record (`avcC`) WebCodecs expects. Pure functions only — this
- * is the part of decoding that is unit-tested without a browser.
+ * understand Annex-B framing: split NAL units for the software decoder, derive
+ * the WebCodecs codec string from SPS, and build WebCodecs chunk descriptors.
+ *
+ * WebCodecs AVC format: this client configures the decoder with
+ * `avc: { format: 'annexb' }` and no `description`, so the bitstream stays
+ * Annex-B end to end (the Host does zero transcoding). The configuration packet
+ * is prepended to the first keyframe chunk so SPS/PPS enter the stream in-band
+ * (docs/protocol.md freezes the configuration packet as a separate frame).
+ *
+ * Pure functions only — this is the unit-tested core of decoding.
  */
+import type { ParsedVideoFrame } from './connection.ts'
 
 /** NAL unit types we care about. */
 export const NAL_TYPE_SPS = 7
@@ -48,42 +56,67 @@ export function nalType(unit: Uint8Array): number {
 }
 
 /**
- * Build the AVCDecoderConfigurationRecord (ISO/IEC 14496-15 §5.3.3.1) from the
- * configuration packet. WebCodecs requires `description` in avcC form, while
- * scrcpy delivers SPS/PPS as Annex-B; passing Annex-B straight through fails.
- * @param config - configuration packet payload.
- * @returns the record, or `undefined` when SPS/PPS are missing/malformed.
- */
-export function buildAvcC(config: Uint8Array): Uint8Array | undefined {
-  const units = splitAnnexB(config)
-  const sps = units.find((unit) => nalType(unit) === NAL_TYPE_SPS)
-  const pps = units.find((unit) => nalType(unit) === NAL_TYPE_PPS)
-  if (sps === undefined || pps === undefined) return undefined
-  if (sps.length < 4) return undefined
-  const record = new Uint8Array(11 + sps.length + pps.length)
-  const view = new DataView(record.buffer)
-  record[0] = 1 // configurationVersion
-  record[1] = sps[1]! // AVCProfileIndication
-  record[2] = sps[2]! // profile_compatibility
-  record[3] = sps[3]! // AVCLevelIndication
-  record[4] = 0xff // reserved '111111' + lengthSizeMinusOne = 3
-  record[5] = 0xe0 | 1 // reserved '111' + numOfSequenceParameterSets = 1
-  view.setUint16(6, sps.length)
-  record.set(sps, 8)
-  const ppsOffset = 8 + sps.length
-  record[ppsOffset] = 1
-  view.setUint16(ppsOffset + 1, pps.length)
-  record.set(pps, ppsOffset + 3)
-  return record
-}
-
-/**
- * Derive the WebCodecs codec string from the configuration packet:
- * `avc1.<profile><constraints><level>` (dotted hex, ISO/IEC 14496-15 §5.3.4).
+ * Derive the WebCodecs codec string from the configuration packet's SPS:
+ * `avc1.<profile><constraints><level>` (ISO/IEC 14496-15 §5.3.4).
  */
 export function codecStringFromConfig(config: Uint8Array): string | undefined {
   const sps = splitAnnexB(config).find((unit) => nalType(unit) === NAL_TYPE_SPS)
   if (sps === undefined || sps.length < 4) return undefined
   const hex = (value: number): string => value.toString(16).padStart(2, '0').toUpperCase()
   return `avc1.${hex(sps[1]!)}${hex(sps[2]!)}${hex(sps[3]!)}`
+}
+
+/** VideoDecoder.configure() options for Annex-B H.264 (no `description`). */
+export interface WebCodecsAvcConfig {
+  codec: string
+  avc: { format: 'annexb' }
+  optimizeForLatency: true
+}
+
+/**
+ * Build the decoder configuration for one scrcpy configuration packet.
+ * @returns `undefined` when the packet carries no parseable SPS.
+ */
+export function webCodecsConfig(configPacket: Uint8Array): WebCodecsAvcConfig | undefined {
+  const codec = codecStringFromConfig(configPacket)
+  if (codec === undefined) return undefined
+  return { codec, avc: { format: 'annexb' }, optimizeForLatency: true }
+}
+
+/** The subset of EncodedVideoChunkInit this client builds. */
+export interface WebCodecsChunkInit {
+  type: 'key' | 'delta'
+  /** Microseconds, as required by WebCodecs. */
+  timestamp: number
+  data: Uint8Array
+}
+
+function concat(first: Uint8Array, second: Uint8Array): Uint8Array {
+  const out = new Uint8Array(first.length + second.length)
+  out.set(first, 0)
+  out.set(second, first.length)
+  return out
+}
+
+/**
+ * Build the encoded-chunk descriptor for one stream frame.
+ *
+ * In Annex-B mode the decoder needs SPS/PPS in-band, so the stored
+ * configuration packet is prepended to the first keyframe chunk.
+ * @param frame - keyframe or delta frame (configuration packets are not chunks).
+ * @param configPrefix - configuration packet to prepend when this is the first
+ *   keyframe after (re)configuration.
+ * @returns the chunk descriptor, or `undefined` for non-video frame types.
+ */
+export function webCodecsChunk(
+  frame: Pick<ParsedVideoFrame, 'type' | 'ptsMicros' | 'payload'>,
+  configPrefix?: Uint8Array,
+): WebCodecsChunkInit | undefined {
+  if (frame.type !== 'keyframe' && frame.type !== 'delta') return undefined
+  const type = frame.type === 'keyframe' ? 'key' : 'delta'
+  const data =
+    type === 'key' && configPrefix !== undefined && configPrefix.length > 0
+      ? concat(configPrefix, frame.payload)
+      : frame.payload
+  return { type, timestamp: frame.ptsMicros, data }
 }

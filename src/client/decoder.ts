@@ -2,10 +2,11 @@
  * Video decoding for the right-Sidebar panel.
  *
  * Two paths, one presentation loop:
- * 1. WebCodecs `VideoDecoder` (hardware, preferred). scrcpy's configuration
- *    packet (SPS/PPS, Annex-B) is rewritten to an `avcC` record for
- *    `description`; `timestamp` = pts ticks * 1000 / 90 µs as frozen by
- *    docs/protocol.md §2.2.
+ * 1. WebCodecs `VideoDecoder` (hardware, preferred) configured for **Annex-B**
+ *    (`avc: { format: 'annexb' }`, no `description`): the Host forwards scrcpy
+ *    bytes untouched, so the bitstream stays Annex-B; the configuration packet
+ *    is prepended to the first keyframe chunk for in-band SPS/PPS.
+ *    `timestamp` = pts ticks * 1000 / 90 µs as frozen by docs/protocol.md §2.2.
  * 2. TinyH264 (WASM) software fallback, only when WebCodecs is missing or
  *    fails. It runs the `tinyh264` Emscripten module on the main thread
  *    (base64-embedded wasm, no worker/chunk: see docs/client.md §3 for why)
@@ -18,7 +19,7 @@
  * matching docs/protocol.md §2.2.
  */
 import type { ParsedVideoFrame } from './connection.ts'
-import { buildAvcC, codecStringFromConfig, splitAnnexB } from './h264.ts'
+import { splitAnnexB, webCodecsChunk, webCodecsConfig } from './h264.ts'
 import type { TinyH264Module } from 'tinyh264/es/TinyH264.js'
 import createTinyH264Module from 'tinyh264/es/TinyH264.js'
 import TinyH264PictureDecoder from 'tinyh264/es/TinyH264Decoder.js'
@@ -32,6 +33,8 @@ export class WebCodecsDecoder {
   #decoder: VideoDecoder
   #configured = false
   #awaitingKeyframe = true
+  /** Configuration packet not yet prepended to a keyframe chunk. */
+  #configPrefix: Uint8Array | undefined
   #onError: ((error: Error) => void) | undefined
 
   static supported(): boolean {
@@ -51,14 +54,16 @@ export class WebCodecsDecoder {
    * @returns false when this browser/codec combination refuses the stream.
    */
   configure(config: Uint8Array): boolean {
-    const description = buildAvcC(config)
-    const codec = codecStringFromConfig(config)
-    if (description === undefined || codec === undefined) return false
+    const options = webCodecsConfig(config)
+    if (options === undefined) return false
     try {
-      this.#decoder.configure({ codec, description, optimizeForLatency: true })
+      // Annex-B, no description: the chunks below stay Annex-B, so nothing is
+      // transcoded between the scrcpy stream and WebCodecs.
+      this.#decoder.configure(options)
     } catch {
       return false
     }
+    this.#configPrefix = config.slice()
     this.#configured = true
     this.#awaitingKeyframe = true
     return true
@@ -67,14 +72,13 @@ export class WebCodecsDecoder {
   decode(frame: ParsedVideoFrame): void {
     if (!this.#configured) return
     if (frame.type === 'delta' && this.#awaitingKeyframe) return
-    if (frame.type === 'keyframe') this.#awaitingKeyframe = false
-    this.#decoder.decode(
-      new EncodedVideoChunk({
-        type: frame.type === 'keyframe' ? 'key' : 'delta',
-        timestamp: frame.ptsMicros,
-        data: frame.payload,
-      }),
-    )
+    const init = webCodecsChunk(frame, frame.type === 'keyframe' ? this.#configPrefix : undefined)
+    if (init === undefined) return
+    if (frame.type === 'keyframe') {
+      this.#awaitingKeyframe = false
+      this.#configPrefix = undefined
+    }
+    this.#decoder.decode(new EncodedVideoChunk(init))
   }
 
   dispose(): void {

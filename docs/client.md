@@ -15,7 +15,7 @@ src/client/
   stream.ts      WebSocket 生命周期：握手、重连、心跳、半开检测
   decoder.ts     解码编排：WebCodecs → 软解回退
   render.ts      两条解码路径共用的单 rAF 渲染循环（canvas、DPR、letterbox）
-  h264.ts        Annex-B 解析 / avcC 构造 / codec string（纯函数）
+  h264.ts        Annex-B 解析 / WebCodecs 配置与 chunk 描述 / codec string（纯函数）
   yuv.ts         I420→RGBA（软解渲染，纯函数）
   input.ts       设备坐标换算 / 键盘映射（纯函数）
   i18n.ts        zh/en 组件文案（locale/{zh,en}.json 的 meta 由宿主读）
@@ -93,9 +93,13 @@ id:'dsh-phone', order:60, label: () => t('settings.section') }, PhoneSettings))`
 
 ## 3. 解码路径与回退
 
-1. **WebCodecs（首选，硬解）**：`VideoDecoder`。configuration 包（SPS/PPS，Annex-B）
-   转成 avcC `AVCDecoderConfigurationRecord` 置 `description`，codec string 由 SPS 的
-   profile/compat/level 生成（如 `avc1.42E01E`）；`optimizeForLatency: true`。
+1. **WebCodecs（首选，硬解）**：`VideoDecoder` 以 **Annex-B** 模式配置——
+   `configure({ codec, avc: { format: 'annexb' }, optimizeForLatency: true })`，
+   **不设 `description`**。codec string 由 configuration 包（SPS/PPS，Annex-B）的
+   profile/compat/level 生成（如 `avc1.42E01E`）；configuration 包会**前置到第一个
+   keyframe chunk**（in-band SPS/PPS），之后 keyframe/delta 直接透传 Annex-B。
+   这样 Host 零转码、客户端零改写，避免「avcC description + Annex-B chunk」的
+   WebCodecs 帧格式冲突（architect 审查发现的 BLOCKER）。
 2. **TinyH264（回退，WASM 软解）**：WebCodecs 不存在或 configure/decode 抛错时触发一次回退。
    使用 `tinyh264` 包（`@yume-chan/scrcpy-decoder-tinyh264` 的底层依赖）内置的
    Emscripten 模块，**主线程**解码，I420→RGBA 后交给同一渲染循环。
@@ -145,13 +149,13 @@ node scripts/check-file-lines.mjs
 
 覆盖：DPH1 解帧/校验/pts 换算、hello/touch/key/text/ping 序列化、server text 解析、
 重连退避与抖动、可见性门控、不可见断流（`close(1000)`、无重连）、心跳半开重连、
-设备坐标换算（letterbox/夹取）、avcC 构造、codec string、I420→RGBA、软解真实关键帧。
+设备坐标换算（letterbox/夹取）、WebCodecs configure/chunk 参数、codec string、I420→RGBA、软解真实关键帧。
 
 ## 6. 未验证项（真实浏览器 / 真实 Host 待 task-8）
 
-1. WebCodecs 在 Chrome/Firefox/Safari 对「avcC description + Annex-B chunk」的接受度；
-   Chromium 实测通常接受 Annex-B chunk，但未在本机浏览器验证（协议 §2.2 只冻结了
-   「configuration 置 description」，avcC 形态是本实现的适配，已在 h264.ts 注明）。
+1. WebCodecs 在 Chrome/Firefox/Safari 对 `avc.format='annexb'` + in-band SPS/PPS 的接受度；
+   Chromium 对 Annex-B chunk 的接受度本机未在真实浏览器验证（协议 §2.2 只冻结了
+   「configuration 置 description」，本实现改用 `avc.format=annexb` + in-band SPS/PPS，需真实页面确认）。
 2. TinyH264 主线程软解在真实浏览器的 CPU/帧率（本机只在 Node 中验证 wasm 解码正确性）。
 3. `IntersectionObserver` 在 DSH 右栏 tab 切换/浮动/折叠时的实际回调时机；
    不可见断流的行为有单测，真实页面待验。
