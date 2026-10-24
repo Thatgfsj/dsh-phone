@@ -84,7 +84,10 @@ interface Harness {
 function makeHarness(overrides: Partial<HttpRouteDeps> = {}): Harness {
   const service = makeService()
   const settings = {
-    value: { attach: { endpoint: '', userHint: '', resolved: false } },
+    value: {
+      attach: { endpoint: '', userHint: '', resolved: false },
+      onboarding: { status: 'pending', choice: '' },
+    },
     revision: 5,
     calls: 0,
     describe() {
@@ -93,7 +96,11 @@ function makeHarness(overrides: Partial<HttpRouteDeps> = {}): Harness {
     async mutate(_ns: string, ops: readonly { path: readonly string[]; value?: unknown }[]) {
       settings.calls += 1
       for (const op of ops) {
-        settings.value.attach[op.path[1] as 'endpoint'] = op.value as never
+        if (op.path[0] === 'attach') {
+          settings.value.attach[op.path[1] as 'endpoint'] = op.value as never
+        } else if (op.path[0] === 'onboarding') {
+          settings.value.onboarding[op.path[1] as 'status'] = op.value as never
+        }
       }
       settings.revision += 1
     },
@@ -103,7 +110,11 @@ function makeHarness(overrides: Partial<HttpRouteDeps> = {}): Harness {
     settings,
     rechecked: 0,
     recheckStatus: { state: 'running', runtime: 'attach', platform: 'linux' } as PhoneStatus,
-    view: { runtime: 'attach', stream: { maxSize: 720, maxFps: 15, bitrate: 2000000 } },
+    view: {
+      runtime: 'attach',
+      onboarding: { status: 'accepted', choice: '' },
+      stream: { maxSize: 720, maxFps: 15, bitrate: 2000000 },
+    },
     connection: { requestRejection: () => undefined },
     verifiedSet: new Set<string>(),
     agentAuth: undefined,
@@ -177,6 +188,7 @@ test('GET /status 与 GET /config：成功体 + no-store', async () => {
   assert.equal(config.statusCode, 200)
   assert.deepEqual(json(config).value, {
     runtime: 'attach',
+    onboarding: { status: 'pending', choice: '' },
     attach: { endpoint: '', userHint: '', resolved: false },
     stream: { maxSize: 720, maxFps: 15, bitrate: 2000000 },
     revision: 5,
@@ -432,6 +444,106 @@ test('GET /status：运行时决策树全失败 → 503 E_RUNTIME_UNAVAILABLE（
   const config = await invoke(harness, { method: 'GET', url: '/dsh-phone/api/config' })
   assert.equal(config.statusCode, 200)
   assert.equal(json(config).ok, true)
+})
+
+test('GET /status：onboarding pending → 200 + E_ONBOARDING_REQUIRED（不触碰设备）', async () => {
+  const harness = makeHarness()
+  harness.view.onboarding = { status: 'pending', choice: '' }
+  const response = await invoke(harness, { method: 'GET', url: '/dsh-phone/api/status' })
+  assert.equal(response.statusCode, 200)
+  const body = json(response)
+  assert.equal(body.ok, false)
+  assert.equal(body.error.code, 'E_ONBOARDING_REQUIRED')
+  assert.equal(body.error.retryable, false)
+  assert.equal(body.error.onboarding.step, 'consent')
+  assert.deepEqual(
+    body.error.onboarding.options.map((option: { id: string }) => option.id),
+    ['emulator', 'redroid', 'attach', 'decline'],
+  )
+  assert.equal(body.error.onboarding.install.emulator.size, '~1.7GB')
+  assert.equal(body.error.onboarding.docs, 'docs/usage.md#首次使用')
+  // 未调用 service.status（不碰 runtime）
+  assert.equal(harness.service.calls.includes('status'), false)
+})
+
+test('GET /status：onboarding declined → 200 + E_ONBOARDING_DECLINED（不触碰设备）', async () => {
+  const harness = makeHarness()
+  harness.view.onboarding = { status: 'declined', choice: 'attach' }
+  const response = await invoke(harness, { method: 'GET', url: '/dsh-phone/api/status' })
+  assert.equal(response.statusCode, 200)
+  assert.equal(json(response).error.code, 'E_ONBOARDING_DECLINED')
+  assert.equal(harness.service.calls.includes('status'), false)
+})
+
+test('GET /screenshot：onboarding pending → 200 JSON 错误，不触发 ensureInteractive', async () => {
+  const harness = makeHarness()
+  harness.view.onboarding = { status: 'pending', choice: '' }
+  const response = await invoke(harness, { method: 'GET', url: '/dsh-phone/api/screenshot' })
+  assert.equal(response.statusCode, 200)
+  assert.equal(json(response).error.code, 'E_ONBOARDING_REQUIRED')
+  assert.equal(harness.service.calls.includes('ensureInteractive'), false)
+})
+
+test('POST /config：写 onboarding.status/choice 生效并回读（R4）', async () => {
+  const harness = makeHarness()
+  let response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/config',
+    body: { path: ['onboarding', 'status'], value: 'accepted', revision: 5 },
+  })
+  assert.equal(response.statusCode, 200)
+  assert.equal(json(response).value.onboarding.status, 'accepted')
+  assert.equal(json(response).value.revision, 6)
+
+  response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/config',
+    body: { path: ['onboarding', 'choice'], value: 'emulator', revision: 6 },
+  })
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(json(response).value.onboarding, { status: 'accepted', choice: 'emulator' })
+})
+
+test('POST /config：onboarding 非法值 → 400 E_BAD_REQUEST', async () => {
+  const harness = makeHarness()
+  for (const [path, value] of [
+    [['onboarding', 'status'], 'yes'],
+    [['onboarding', 'choice'], 'waydroid'],
+  ] as const) {
+    const response = await invoke(harness, {
+      method: 'POST',
+      url: '/dsh-phone/api/config',
+      body: { path, value, revision: 5 },
+    })
+    assert.equal(response.statusCode, 400)
+    assert.equal(json(response).error.code, 'E_BAD_REQUEST')
+  }
+  assert.equal(harness.settings.calls, 0)
+})
+
+test('本地 Agent 通道允许写 onboarding，但 userHint 仍 403（R2）', async () => {
+  const harness = makeHarness()
+  harness.connection = { requestRejection: () => 401 }
+  harness.agentAuth = (req) =>
+    (req.headers as Record<string, string>)['x-dsh-phone-token'] === 'good-token'
+
+  const onboarding = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/agent/config',
+    body: { path: ['onboarding', 'status'], value: 'accepted', revision: 5 },
+    headers: { 'x-dsh-phone-token': 'good-token' },
+  })
+  assert.equal(onboarding.statusCode, 200)
+  assert.equal(json(onboarding).value.onboarding.status, 'accepted')
+
+  const userHint = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/agent/config',
+    body: { path: ['attach', 'userHint'], value: '不该被 Agent 写', revision: 6 },
+    headers: { 'x-dsh-phone-token': 'good-token' },
+  })
+  assert.equal(userHint.statusCode, 403)
+  assert.equal(json(userHint).error.code, 'E_FORBIDDEN')
 })
 
 test('未知路由 → 404 E_BAD_REQUEST', async () => {

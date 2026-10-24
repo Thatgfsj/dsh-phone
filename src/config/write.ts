@@ -48,11 +48,13 @@ export class ConfigWriteError extends Error {
   }
 }
 
-/** R1 白名单：可实时写入的三个叶子。 */
+/** R1 白名单：可实时写入的 volatile 叶子（attach 三键 + onboarding 两键，issue #30）。 */
 export const WRITABLE_PATHS: readonly (readonly string[])[] = [
   ['attach', 'userHint'],
   ['attach', 'endpoint'],
   ['attach', 'resolved'],
+  ['onboarding', 'status'],
+  ['onboarding', 'choice'],
 ]
 
 export function pathKey(path: readonly string[]): string {

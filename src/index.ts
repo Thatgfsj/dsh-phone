@@ -19,7 +19,7 @@ import { API_PREFIX, createApiHandler, createReadOnlyHandler } from './http/rout
 import type { ConfigView } from './http/routes.ts'
 import type { AttachmentsLike } from './phone/contracts.ts'
 import type { PhoneService } from './phone/service.ts'
-import { createPhoneService } from './phone/wiring.ts'
+import { createPhoneService, readOnboarding } from './phone/wiring.ts'
 import type { PhoneStreamService, StreamConnectionFence } from './stream/index.ts'
 import { createStreamUpgradeRoute } from './stream/index.ts'
 import type { ToolHostLike } from './tools/common.ts'
@@ -57,6 +57,7 @@ interface WebHostContext {
 function configView(config: PhoneConfig): ConfigView {
   return {
     runtime: config.runtime,
+    onboarding: readOnboarding(config),
     stream: {
       maxSize: config.stream.maxSize,
       maxFps: config.stream.maxFps,
@@ -122,7 +123,12 @@ export function apply(ctx: Context, config: PhoneConfig): void {
   const attachments = (): AttachmentsLike | undefined =>
     ctx.get('attachments') as AttachmentsLike | undefined
   registerShellApproval(ctx as unknown as ShellApprovalHost)
-  registerPhoneTools(toolHost(ctx), { service, attachments })
+  registerPhoneTools(toolHost(ctx), {
+    service,
+    attachments,
+    // 首次使用守卫：每次工具调用实时读 volatile 配置（issue #30）
+    onboarding: () => readOnboarding(config),
+  })
 
   // 4) http + ws（web carrier 可选：无 webServer 时插件仍提供工具）
   ctx.inject(['webServer'], (webCtx) => {

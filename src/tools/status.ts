@@ -1,7 +1,9 @@
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
-import { type ToolDeps } from './common.ts'
+import { onboardingFailure } from '../config/onboarding.ts'
+import type { JsonValue } from '../config/onboarding.ts'
+import { currentOnboarding, type ToolDeps } from './common.ts'
 
 const STATUS_SCHEMA = {
   type: 'object',
@@ -23,8 +25,10 @@ const STATUS_SCHEMA = {
       },
     },
     lastError: { type: 'string' },
-    // runtime 决策树全失败时的结构化错误（与其它工具 E_RUNTIME_UNAVAILABLE 语义一致）
+    // runtime 决策树全失败 / onboarding 守卫的结构化错误
     ok: { type: 'boolean' },
+    message: { type: 'string' },
+    onboarding: { type: 'json' },
     code: { type: 'string' },
     retryable: { type: 'boolean' },
     hints: { type: 'array', items: { type: 'string' } },
@@ -45,6 +49,7 @@ interface StatusLike {
   code?: string
   retryable?: boolean
   hints?: string[]
+  onboarding?: JsonValue
 }
 
 function renderStatus(status: StatusLike): string {
@@ -75,6 +80,17 @@ export function createStatusTool(deps: ToolDeps): ToolDefinition {
       render: (_args, value) => [{ type: 'text', text: renderStatus(value) }],
     },
     async execute() {
+      // issue #30：首次使用守卫优先于一切设备/运行时动作
+      const onboarding = onboardingFailure(currentOnboarding(deps))
+      if (onboarding) {
+        return {
+          ...onboarding,
+          state: 'stopped',
+          runtime: 'attach',
+          platform: 'other',
+          lastError: onboarding.message,
+        }
+      }
       try {
         return await deps.service.status()
       } catch (error) {

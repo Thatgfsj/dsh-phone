@@ -19,22 +19,31 @@ import {
   readPath,
   writeConfigValue,
 } from '../config/write.ts'
+import {
+  isOnboardingChoice,
+  isOnboardingStatus,
+  onboardingFailure,
+} from '../config/onboarding.ts'
+import type { OnboardingState, OnboardingToolFailure } from '../config/onboarding.ts'
 import type { SettingsFacade } from '../config/write.ts'
 import type { PhoneOperations, PhoneStatus } from '../phone/contracts.ts'
 import { RuntimeUnavailableError } from '../runtime/types.ts'
 import { rejectionFor, sendRejection } from './auth.ts'
 import type { ConnectionLike } from './auth.ts'
-import { ApiError, readJsonBody, sendError, sendPng, sendSuccess } from './json.ts'
+import { ApiError, readJsonBody, sendError, sendJson, sendPng, sendSuccess } from './json.ts'
 
 export const API_PREFIX = '/dsh-phone/api'
 
 export interface ConfigView {
   runtime: string
+  /** 首次使用守卫状态（issue #30）；面板据此决定是否展示引导。 */
+  onboarding: OnboardingState
   stream: { maxSize: number; maxFps: number; bitrate: number }
 }
 
 export interface ConfigSnapshot {
   runtime: string
+  onboarding: OnboardingState
   attach: { endpoint: string; userHint: string; resolved: boolean }
   stream: { maxSize: number; maxFps: number; bitrate: number }
   revision: number
@@ -79,8 +88,13 @@ function configSnapshot(deps: SnapshotSource): ConfigSnapshot {
   const descriptor = describeEntry(deps.getSettings())
   const attach = (readPath(descriptor.value, ['attach']) ?? {}) as Record<string, unknown>
   const view = deps.getConfigView()
+  const onboarding = (readPath(descriptor.value, ['onboarding']) ?? {}) as Record<string, unknown>
   return {
     runtime: view.runtime,
+    onboarding: {
+      status: isOnboardingStatus(onboarding.status) ? onboarding.status : view.onboarding.status,
+      choice: isOnboardingChoice(onboarding.choice) ? onboarding.choice : view.onboarding.choice,
+    },
     attach: {
       endpoint: typeof attach.endpoint === 'string' ? attach.endpoint : '',
       userHint: typeof attach.userHint === 'string' ? attach.userHint : '',
@@ -89,6 +103,19 @@ function configSnapshot(deps: SnapshotSource): ConfigSnapshot {
     stream: view.stream,
     revision: descriptor.revision,
   }
+}
+
+/** 200 + 结构化 onboarding 错误体（待用户答复；面板展示引导而不是报错）。 */
+function sendOnboardingFailure(res: ServerResponse, failure: OnboardingToolFailure): void {
+  sendJson(res, 200, {
+    ok: false,
+    error: {
+      code: failure.code,
+      message: failure.message,
+      retryable: failure.retryable,
+      ...(failure.onboarding === undefined ? {} : { onboarding: failure.onboarding }),
+    },
+  })
 }
 
 function asRecord(body: unknown): Record<string, unknown> {
@@ -194,6 +221,16 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
     if (pathKey(path) === 'attach.resolved' && typeof body.value !== 'boolean') {
       throw new ApiError(400, 'E_BAD_REQUEST', 'attach.resolved 必须是布尔值')
     }
+    if (pathKey(path) === 'onboarding.status' && !isOnboardingStatus(body.value)) {
+      throw new ApiError(400, 'E_BAD_REQUEST', 'onboarding.status 必须是 pending/accepted/declined')
+    }
+    if (pathKey(path) === 'onboarding.choice' && !isOnboardingChoice(body.value)) {
+      throw new ApiError(
+        400,
+        'E_BAD_REQUEST',
+        'onboarding.choice 必须是空串/emulator/redroid/attach',
+      )
+    }
     const revision = body.revision
     if (revision !== undefined && (typeof revision !== 'number' || !Number.isInteger(revision))) {
       throw new ApiError(400, 'E_BAD_REQUEST', 'revision 必须是整数')
@@ -250,7 +287,17 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
     sendSuccess(res, configSnapshot(deps))
   }
 
+  function onboardingGuard(): OnboardingToolFailure | undefined {
+    return onboardingFailure(deps.getConfigView().onboarding)
+  }
+
   async function handleScreenshot(res: ServerResponse): Promise<void> {
+    // issue #30：首次使用守卫优先，不触发懒启动/截图
+    const blocked = onboardingGuard()
+    if (blocked) {
+      sendOnboardingFailure(res, blocked)
+      return
+    }
     const readiness = await deps.service.ensureInteractive()
     if (readiness.state === 'booting') {
       sendError(res, 200, 'E_BOOTING', '实例正在启动，稍后重试截图', true, readiness.bootMs)
@@ -286,6 +333,12 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
       }
 
       if (method === 'GET' && rawPath === '/status') {
+        // issue #30：pending/declined 返回 200 + 结构化 onboarding（面板不报错）
+        const blocked = onboardingGuard()
+        if (blocked) {
+          sendOnboardingFailure(res, blocked)
+          return
+        }
         sendSuccess(res, await deps.service.status())
         return
       }

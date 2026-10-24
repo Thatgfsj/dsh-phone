@@ -23,15 +23,20 @@
 
 | 方法 | 路径 | 请求体 | 成功 `value` |
 |---|---|---|---|
-| GET | `/dsh-phone/api/status` | — | `PhoneStatus`（见 §1.1） |
-| GET | `/dsh-phone/api/config` | — | `{ runtime, attach:{endpoint,userHint,resolved}, stream:{maxSize,maxFps,bitrate}, revision }` |
-| POST | `/dsh-phone/api/config` | `{ path:['attach','userHint'], value, revision }` | 同上（写后回读，R4） |
+| GET | `/dsh-phone/api/status` | — | `PhoneStatus`（见 §1.1）；onboarding pending/declined → **200** `{ok:false,error:{code:'E_ONBOARDING_*',...}}`（见 §1.2） |
+| GET | `/dsh-phone/api/config` | — | `{ runtime, onboarding:{status,choice}, attach:{endpoint,userHint,resolved}, stream:{maxSize,maxFps,bitrate}, revision }` |
+| POST | `/dsh-phone/api/config` | `{ path:['attach','userHint'], value, revision }`（也接受 `onboarding.status` / `onboarding.choice`） | 同上（写后回读，R4） |
 | POST | `/dsh-phone/api/attach/verify` | `{ endpoint:'127.0.0.1:5555' }` | `{ ok:boolean, latencyMs, banner?:string }`（**不落盘**，R5） |
 | GET | `/dsh-phone/api/screenshot` | — | PNG 字节（`image/png`，非 JSON 包装） |
 
 说明：
-- `POST /config` 只允许三个键：`attach.userHint`、`attach.endpoint`、`attach.resolved`；其它路径 400 `E_BAD_PATH`。
+- `POST /config` 只允许五个键：`attach.userHint`、`attach.endpoint`、`attach.resolved`、
+  `onboarding.status`、`onboarding.choice`；其它路径 400 `E_BAD_PATH`。
   这是 R1「定点合并」的在线表达：Host 侧转成 `ctx.settings.mutate('dsh-phone',[{op:'set',path,value}], revision)`。
+- onboarding：`status ∈ pending|accepted|declined`（默认 pending，旧配置无该段也按 pending）；
+  `choice ∈ ''|emulator|redroid|attach`（默认 ''）。浏览器设置页与本地 Agent 通道均可写；
+  本地 Agent 通道仍禁止写 `attach.userHint`（R2，403 `E_FORBIDDEN`）。
+- `GET /screenshot` 在 pending/declined 时返回 200 + JSON `E_ONBOARDING_*`（不启动实例/不截图）。
 - `revision` 必须来自最近一次 `GET /config`；冲突返回 409 `E_CONFIG_CONFLICT`，客户端刷新后重试一次。
 - `attach/verify` 内部执行 `connect(endpoint,{timeoutMs:3000})` + `getprop ro.product.model`；失败 200 + `ok:false`（便于列出候选），
   不写配置。R5：只有 verify `ok:true` 才允许随后写 endpoint/resolved。
@@ -51,6 +56,16 @@ interface PhoneStatus {
   lastError?: string
 }
 ```
+
+### 1.2 首次使用守卫（onboarding，issue #30）
+
+- `onboarding.status !== 'accepted'` 时，9 个 `phone_*` 工具统一返回
+  `{ok:false, code:'E_ONBOARDING_REQUIRED'|'E_ONBOARDING_DECLINED', retryable:false, onboarding?:{...}}`，
+  且**不调用 ensureRunning、不启动/安装任何东西、不写配置**；由操作 Agent 向用户提问。
+- `GET /status` 与 `GET /screenshot` 在 pending/declined 时返回 **200** + 同一结构化错误体
+  （`error.onboarding` 含 step/question/options/install/docs），面板可展示引导而不报错。
+- accepted 且 `choice` 非空 → 等价显式 `runtime=choice`（只走该 kind）；choice 空 → auto 决策树；
+  运行时不可用仍返回 503 `E_RUNTIME_UNAVAILABLE`。
 
 ## 2. WebSocket `/dsh-phone/stream`
 
@@ -134,6 +149,8 @@ interface PhoneStatus {
 | `E_CONFIG_CONFLICT` | 409 | true | revision 不匹配（刷新后重试一次） |
 | `E_NOT_VERIFIED` | 409 | false | 试图写 endpoint 但未通过 verify（R5） |
 | `E_RUNTIME_UNAVAILABLE` | 503（HTTP 路由）/ WS error | false | 决策树全失败，message 含完整安装指引（工具路径返回结构化 `ok:false+hints`） |
+| `E_ONBOARDING_REQUIRED` | 200（/status、/screenshot）/ 工具结构化 | false | 首次使用未确认；`onboarding` 含 consent 提问/选项/安装指引/docs |
+| `E_ONBOARDING_DECLINED` | 200（/status、/screenshot）/ 工具结构化 | false | 用户选择暂不使用；可在设置页重新启用 |
 | `E_BOOTING` | 200/WS state | true | 启动中，带 `bootMs` |
 | `E_STREAM_START_FAILED` | WS error | true | scrcpy server 启动/推包失败 |
 | `E_STREAM_BUSY` | WS error | true | 已有会话且无法替换（正常不应出现） |

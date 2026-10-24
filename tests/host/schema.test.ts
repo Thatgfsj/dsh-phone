@@ -57,8 +57,39 @@ test('Config：attach 三个叶子是 volatile，enabled/runtime/stream 不是',
 test('Config：WRITABLE_CONFIG_PATHS 与 volatile 叶子一致（R1 白名单）', () => {
   assert.deepEqual(
     WRITABLE_CONFIG_PATHS.map((path) => path.join('.')).sort(),
-    ['attach.endpoint', 'attach.resolved', 'attach.userHint'],
+    [
+      'attach.endpoint',
+      'attach.resolved',
+      'attach.userHint',
+      'onboarding.choice',
+      'onboarding.status',
+    ],
   )
+})
+
+test('Config：onboarding 默认 pending / choice 空，且两个叶子是 volatile（issue #30）', () => {
+  const config = Config({})
+  assert.equal(config.onboarding.status.get(), 'pending')
+  assert.equal(config.onboarding.choice.get(), '')
+  assert.ok(isVolatile(config.onboarding.status))
+  assert.ok(isVolatile(config.onboarding.choice))
+
+  const accepted = Config({ onboarding: { status: 'accepted', choice: 'emulator' } })
+  assert.equal(accepted.onboarding.status.get(), 'accepted')
+  assert.equal(accepted.onboarding.choice.get(), 'emulator')
+  assert.throws(() => Config({ onboarding: { status: 'yes' as never } }), /onboarding/)
+  assert.throws(() => Config({ onboarding: { choice: 'waydroid' as never } }), /onboarding/)
+})
+
+test('Config：旧配置无 onboarding 段 → 默认 pending（升级兼容）', () => {
+  const legacy = Config({
+    enabled: true,
+    runtime: 'attach',
+    attach: { endpoint: '127.0.0.1:5555', userHint: '', resolved: true },
+    stream: { maxSize: 720, maxFps: 15, bitrate: 2000000 },
+  })
+  assert.equal(legacy.onboarding.status.get(), 'pending')
+  assert.equal(legacy.onboarding.choice.get(), '')
 })
 
 test('Config：runtime 枚举严格（SPEC §6.1）', () => {

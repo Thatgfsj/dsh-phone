@@ -18,7 +18,7 @@ export function createSwipeTool(deps: ToolDeps): ToolDefinition {
     },
     output: { schema: RESULT_SCHEMA, render: (_args, value) => renderResult(value) },
     execute(args) {
-      return guarded(deps.service, async () => {
+      return guarded(deps, async () => {
         await deps.service.swipe(args.x1, args.y1, args.x2, args.y2, args.durationMs)
         return {
           message: `已滑动 (${args.x1}, ${args.y1}) → (${args.x2}, ${args.y2})，${args.durationMs}ms`,
