@@ -41,14 +41,14 @@ DOM、样式、服务注册全部发生在 `apply(ctx)` 里，样式以 React `<
 
 ```ts
 ctx.effect(() => ctx.sidebarRightTabs.register({
-  id: 'dsh-phone/tab', kind: 'dshPhone', priority: 'extension',
+  id: '@local/dsh-phone/tab', kind: 'dshPhone', priority: 'extension',
   title: () => t('panel.title'),
 }), 'dsh-phone: right sidebar tab type')
 
 ctx.slots.inject('sidebar.right.pane.tab', () =>
-  ctx.slots.register({ name: 'sidebar.right.pane.tab', key: 'dsh-phone/tab', locale: NS }, PhonePanel))
+  ctx.slots.register({ name: 'sidebar.right.pane.tab', key: '@local/dsh-phone/tab', locale: NS }, PhonePanel))
 ctx.slots.inject('sidebar.right.pane.tab.title', () =>
-  ctx.slots.register({ name: 'sidebar.right.pane.tab.title', key: 'dsh-phone/tab', locale: NS }, PhoneTitle))
+  ctx.slots.register({ name: 'sidebar.right.pane.tab.title', key: '@local/dsh-phone/tab', locale: NS }, PhoneTitle))
 ```
 
 - key = tab definition 的 `id`（seat 按 definition.id 派发）。

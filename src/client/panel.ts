@@ -94,7 +94,12 @@ export function createPhonePanel(deps: PanelDeps): ReactNamespace.ComponentType 
       applySize()
 
       const client = new StreamClient({
-        viewport: () => ({ w: deviceRef.current.width, h: deviceRef.current.height }),
+        // The first hello may precede `ready`; fall back to the default 720p
+        // portrait so the Host never receives a zero viewport.
+        viewport: () => ({
+          w: deviceRef.current.width || 720,
+          h: deviceRef.current.height || 1280,
+        }),
         onFrame: (frame: ParsedVideoFrame) => decoder.push(frame),
         onMessage: (message: ServerMessage) => {
           if (message.type === 'ready') {

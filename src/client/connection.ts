@@ -1,18 +1,13 @@
 /**
  * WebSocket transport for the phone video stream (docs/protocol.md §2).
  *
- * This module is DOM-light on purpose: the socket constructor, timers, clock
- * and randomness are injectable, so the whole reconnect/visibility/heartbeat
- * state machine runs under `node --test` with fakes. DOM wiring (real
- * WebSocket, IntersectionObserver, visibilitychange) lives in panel.tsx.
+ * DOM-light: socket/timers/clock/randomness are injectable, so the reconnect
+ * and visibility state machines are unit-tested; DOM wiring lives in panel.ts.
  *
- * Wire facts frozen by docs/protocol.md:
- * - path `/dsh-phone/stream`, same origin only, no token;
- * - first client frame is a `hello` JSON text frame;
- * - server sends JSON text (ready/state/pong/error) and binary video frames
- *   with an 8-byte header: ASCII `DPH1` + u32 meta
- *   (4 bits type: 0 config/1 keyframe/2 delta/3 audio/4 control, 28 bits pts at
- *   90 kHz, wrapping at 2^28).
+ * Frozen by docs/protocol.md: same-origin `/dsh-phone/stream`, no token;
+ * the first client frame is `hello`; the server sends JSON text plus binary
+ * frames with an 8-byte header: ASCII `DPH1` + u32 meta (4 bits type
+ * 0 config/1 key/2 delta/3 audio/4 control, 28 bits pts @90 kHz).
  */
 
 /** Same-origin upgrade path. */

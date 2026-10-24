@@ -22,7 +22,7 @@ import { createPhonePanel, createPhonePanelTitle } from './panel.ts'
 import { createPhoneSettings } from './settings.ts'
 
 /** Tab definition id; also the key used by both sidebar seats. */
-export const TAB_ID = 'dsh-phone/tab'
+export const TAB_ID = '@local/dsh-phone/tab'
 /** Page kind opened through `ctx.sidebarRight.openTab`. */
 export const PHONE_KIND = 'dshPhone'
 /** Settings section list key. */

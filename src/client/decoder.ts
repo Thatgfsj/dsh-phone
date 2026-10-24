@@ -240,6 +240,10 @@ export class StreamDecoder {
       )
       this.renderer.presentImage(image)
     })
+    // A configuration packet can arrive while the wasm module is still loading;
+    // apply it now instead of waiting for another (there is no re-config packet).
+    const config = this.#config
+    if (config !== undefined && this.#kind === 'soft') this.#soft.configure(config)
   }
 
   async #fallback(reason: string): Promise<void> {
