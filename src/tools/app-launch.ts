@@ -18,7 +18,7 @@ export function createAppLaunchTool(deps: ToolDeps): ToolDefinition {
     },
     output: { schema: RESULT_SCHEMA, render: (_args, value) => renderResult(value) },
     execute(args) {
-      return guarded(deps.service, async () => {
+      return guarded(deps, async () => {
         await deps.service.appLaunch(args.pkg)
         return { message: `已启动应用 ${args.pkg}` }
       })

@@ -1,12 +1,12 @@
 /**
  * verify-install 的配置 schema 断言（独立文件，避免 verify-install 超过 300 行目标）。
  *
- * 断言 dump-config-schema 里 dsh-phone entry 的 config schema：顶层字段、attach 三叶
- * volatile、stream/lifecycle/limits 默认值、runtime 四枚举、x-cordis.complete。
+ * 断言 dump-config-schema 里 dsh-phone entry 的 config schema：顶层字段、attach 三叶与
+ * onboarding 两叶 volatile、stream/lifecycle/limits 默认值、runtime 四枚举、x-cordis.complete。
  */
 import { assert, assertDeepEqual, assertEqual, assertIncludes, assertMatch, evidence } from './harness.mjs'
 
-const SPEC_CONFIG_KEYS = ['enabled', 'runtime', 'attach', 'redroid', 'emulator', 'stream', 'lifecycle', 'limits']
+const SPEC_CONFIG_KEYS = ['enabled', 'runtime', 'onboarding', 'attach', 'redroid', 'emulator', 'stream', 'lifecycle', 'limits']
 
 export function firstObjectSchema(branch) {
   const candidates = Array.isArray(branch?.anyOf) ? branch.anyOf : []
@@ -39,6 +39,14 @@ export function assertSchema(schema) {
   for (const leaf of ['endpoint', 'userHint', 'resolved']) {
     assertEqual(attach.properties[leaf]['x-cordis']?.volatile, true, 'attach.' + leaf + ' 必须是 volatile')
   }
+  // issue #30：首次使用守卫（status/choice 两个 volatile 叶子，默认 pending / ''）
+  const onboarding = firstObjectSchema(phone.properties.onboarding)
+  assertDeepEqual(Object.keys(onboarding.properties).sort(), ['choice', 'status'], 'onboarding 字段')
+  assertEqual(onboarding.properties.status.default, 'pending', 'onboarding.status 默认值')
+  assertEqual(onboarding.properties.choice.default, '', 'onboarding.choice 默认值')
+  for (const leaf of ['status', 'choice']) {
+    assertEqual(onboarding.properties[leaf]['x-cordis']?.volatile, true, 'onboarding.' + leaf + ' 必须是 volatile')
+  }
   const stream = firstObjectSchema(phone.properties.stream)
   assertEqual(stream.properties.maxSize.default, 720, 'stream.maxSize 默认值')
   assertEqual(stream.properties.maxFps.default, 15, 'stream.maxFps 默认值')
@@ -52,5 +60,8 @@ export function assertSchema(schema) {
   for (const value of ['auto', 'redroid', 'emulator', 'attach']) {
     assertIncludes(runtimeText, '"const":"' + value + '"', 'runtime 枚举缺少 ' + value)
   }
-  evidence('schema', 'complete=true, attach.* volatile, stream/lifecycle/limits 默认值, runtime 4 枚举')
+  evidence(
+    'schema',
+    'complete=true, attach.*/onboarding.* volatile, stream/lifecycle/limits 默认值, runtime 4 枚举',
+  )
 }

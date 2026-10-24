@@ -1,8 +1,10 @@
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
+import { onboardingFailure } from '../config/onboarding.ts'
+import type { JsonValue } from '../config/onboarding.ts'
 import type { AttachmentRef } from '../phone/contracts.ts'
-import { bootingFailure, failureFrom, type ToolDeps } from './common.ts'
+import { bootingFailure, currentOnboarding, failureFrom, type ToolDeps } from './common.ts'
 
 const IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
 
@@ -20,6 +22,8 @@ interface ScreenshotValue {
   code?: string
   retryable?: boolean
   bootMs?: number
+  hints?: string[]
+  onboarding?: JsonValue
 }
 
 const SCREENSHOT_SCHEMA = {
@@ -60,6 +64,7 @@ const SCREENSHOT_SCHEMA = {
     retryable: { type: 'boolean' },
     bootMs: { type: 'integer' },
     hints: { type: 'array', items: { type: 'string' } },
+    onboarding: { type: 'json' },
   },
 } as const
 
@@ -91,6 +96,10 @@ export function createScreenshotTool(deps: ToolDeps): ToolDefinition {
       },
     },
     async execute(): Promise<ScreenshotValue> {
+      // issue #30：首次使用守卫优先（不启动运行时、不截图）
+      const onboarding = onboardingFailure(currentOnboarding(deps))
+      if (onboarding !== undefined) return onboarding
+
       let readiness
       try {
         readiness = await deps.service.ensureInteractive()

@@ -14,7 +14,7 @@ export function createInputTextTool(deps: ToolDeps): ToolDefinition {
     },
     output: { schema: RESULT_SCHEMA, render: (_args, value) => renderResult(value) },
     execute(args) {
-      return guarded(deps.service, async () => {
+      return guarded(deps, async () => {
         await deps.service.inputText(args.text)
         return { message: `已注入文本（${args.text.length} 字符）` }
       })

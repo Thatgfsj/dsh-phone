@@ -97,6 +97,10 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 
 其中 `phone_status/phone_screenshot/phone_uiautomator_dump` 无参数；其余必填参数如上。`state=booting` 时工具返回可重试的 `E_BOOTING`（带 `bootMs`），不要当失败中断任务。
 
+**首次使用守卫**：`onboarding.status` 为 `pending`/`declined` 时，9 个工具都返回
+`E_ONBOARDING_REQUIRED`/`E_ONBOARDING_DECLINED`（`retryable:false`，pending 带 `onboarding` 提问与安装指引），
+不触碰设备/运行时；用户明确答复后写 `onboarding.status`（+ `choice`）即放行。详见 [docs/usage.md](docs/usage.md#首次使用)。
+
 ## 配置
 
 `dsh-phone` 配置节点（完整说明与变更权见 [docs/config.md](docs/config.md)）：
@@ -108,6 +112,8 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 | `attach.endpoint` | `""` | **volatile**；接入流程验证后单键写入 |
 | `attach.userHint` | `""` | **volatile**；仅用户在设置页写，原文保留 |
 | `attach.resolved` | `false` | **volatile**；缓存锚点，重置权属用户 |
+| `onboarding.status` | `"pending"` | **volatile**；首次使用守卫（pending/accepted/declined），旧配置无该段也按 pending |
+| `onboarding.choice` | `""` | **volatile**；`""｜emulator｜redroid｜attach`，accepted 且非空时等价显式 runtime |
 | `redroid.image` / `memLimit` / `vcpuLimit` | `redroid/redroid:14-latest` / `2g` / `2` | 用户（模拟器参数） |
 | `emulator.avdName` / `resolution` | `""` / `720x1280` | 用户；空 avdName 表示首次自动创建 |
 | `stream.maxSize` / `maxFps` / `bitrate` | `720` / `15` / `2000000` | 归插件管，Agent 不调整 |
@@ -122,9 +128,9 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 
 | 方法/路径 | 用途 |
 |---|---|
-| `GET /status` | 实例状态 |
-| `GET /config` | 配置快照 + settings revision（浏览器/设置页） |
-| `POST /config` | 单键写入（浏览器设置页） |
+| `GET /status` | 实例状态；onboarding pending/declined → 200 结构化 `E_ONBOARDING_*`（不碰设备） |
+| `GET /config` | 配置快照（含 onboarding）+ settings revision（浏览器/设置页） |
+| `POST /config` | 单键写入（浏览器设置页；支持 attach 三键 + onboarding 两键） |
 | `POST /attach/verify` | 连通验证（connect + `getprop ro.product.model`），不落盘（R5） |
 | `POST /agent/config` | 本地 Agent 单键写入（loopback + 无 Origin + `x-dsh-phone-token`） |
 | `GET /screenshot` | 按需单帧 PNG |
@@ -137,7 +143,7 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 
 | 规则 | 实现 |
 |---|---|
-| **R1 定点合并** | 只允许写 `attach.endpoint` / `attach.resolved` / `attach.userHint` 三个 volatile 键；其余路径 400 `E_BAD_PATH` |
+| **R1 定点合并** | 允许写 `attach.endpoint` / `attach.resolved` / `attach.userHint` 与 `onboarding.status` / `onboarding.choice`；其余路径 400 `E_BAD_PATH`（Agent 通道仍禁写 userHint） |
 | **R2 原文保留** | `userHint` 永不规范化/删除；本地 Agent 通道写它返回 403 `E_FORBIDDEN` |
 | **R3 缓存命中** | `resolved=true` 直接连现有 endpoint，不重新探测、不重写配置 |
 | **R4 写后双验证** | 写后 describe 回读比对；写 endpoint/resolved 后再取 `phone_status` 要求 running |

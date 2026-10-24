@@ -17,7 +17,7 @@ export function createShellTool(deps: ToolDeps): ToolDefinition {
     },
     output: { schema: RESULT_SCHEMA, render: (_args, value) => renderResult(value) },
     execute(args) {
-      return guarded(deps.service, async () => {
+      return guarded(deps, async () => {
         const output = await deps.service.shell(args.cmd)
         const trimmed = output.trim()
         return {

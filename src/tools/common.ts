@@ -6,6 +6,8 @@
  * - booting：`{ ok:false, code:'E_BOOTING', retryable:true, bootMs }`（**不抛错**）
  * - 失败：`{ ok:false, code, message, retryable, hints? }`
  */
+import { onboardingFailure } from '../config/onboarding.ts'
+import type { JsonValue, OnboardingState } from '../config/onboarding.ts'
 import type { AttachmentsLike, PhoneOperations } from '../phone/contracts.ts'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 
@@ -16,6 +18,8 @@ export interface ToolFailure {
   retryable: boolean
   bootMs?: number
   hints?: string[]
+  /** 首次使用守卫的提问结构（issue #30；仅 E_ONBOARDING_* 带）。 */
+  onboarding?: JsonValue
 }
 
 export interface ToolSuccess {
@@ -36,6 +40,7 @@ export const RESULT_SCHEMA = {
     retryable: { type: 'boolean' },
     bootMs: { type: 'integer' },
     hints: { type: 'array', items: { type: 'string' } },
+    onboarding: { type: 'json' },
   },
 } as const
 
@@ -47,6 +52,7 @@ export interface RenderableResult {
   retryable?: boolean
   bootMs?: number
   hints?: readonly string[]
+  onboarding?: JsonValue
 }
 
 /** ContentBlock 文本块（不 import dsh-llm，保持 host 工具层解耦）。 */
@@ -65,6 +71,9 @@ export function renderResult(value: RenderableResult): TextBlockLike[] {
   }
   if (value.retryable && value.bootMs === undefined) text += ' [可重试]'
   if (value.hints && value.hints.length > 0) text += '\n' + value.hints.join('\n')
+  if (value.onboarding !== undefined) {
+    text += '\n' + JSON.stringify(value.onboarding, null, 2)
+  }
   return [{ type: 'text', text }]
 }
 
@@ -114,11 +123,21 @@ export function failureFrom(error: unknown): ToolFailure {
   return { ok: false, code: 'E_DEVICE_COMMAND', message, retryable: true }
 }
 
-/** 工具执行骨架：前置 readiness → 动作 → 结构化结果。 */
+/** 读取当前 onboarding 状态（未注入时视作 accepted，兼容 #4 既有单测）。 */
+export function currentOnboarding(deps: ToolDeps): OnboardingState {
+  return deps.onboarding?.() ?? { status: 'accepted', choice: '' }
+}
+
+/** 工具执行骨架：首次使用守卫 → 前置 readiness → 动作 → 结构化结果。 */
 export async function guarded(
-  service: PhoneOperations,
+  deps: ToolDeps,
   action: () => Promise<{ message?: string } | void>,
 ): Promise<ToolResult> {
+  // 硬规则（issue #30）：用户明确同意前不得 ensureRunning/碰设备
+  const onboarding = onboardingFailure(currentOnboarding(deps))
+  if (onboarding) return onboarding
+
+  const service = deps.service
   let readiness
   try {
     readiness = await service.ensureInteractive()
@@ -137,9 +156,11 @@ export async function guarded(
   }
 }
 
-/** 每个工具工厂的依赖：PhoneService + 可选的 attachments 服务。 */
+/** 每个工具工厂的依赖：PhoneService + onboarding 状态 + 可选的 attachments 服务。 */
 export interface ToolDeps {
   service: PhoneOperations
+  /** 当前 onboarding 状态（index 从 volatile 配置实时读取；未注入视作 accepted）。 */
+  onboarding?(): OnboardingState
   /** ctx.get('attachments')——缺失时 phone_screenshot 降级为文本。 */
   attachments?(): AttachmentsLike | undefined
 }
