@@ -141,6 +141,71 @@ test('phone_screenshot：有 attachments 输出 image block，渲染 text+image'
   assert.equal((blocks[1] as { type: string }).type, 'image')
 })
 
+const TOOL_ARGS: Record<string, Record<string, unknown>> = {
+  phone_status: {},
+  phone_screenshot: {},
+  phone_tap: { x: 1, y: 2 },
+  phone_swipe: { x1: 1, y1: 2, x2: 3, y2: 4, durationMs: 200 },
+  phone_key: { name: 'HOME' },
+  phone_input_text: { text: '你好' },
+  phone_app_launch: { pkg: 'com.android.settings' },
+  phone_uiautomator_dump: {},
+  phone_shell: { cmd: 'rm -rf /sdcard' },
+}
+
+test('onboarding pending：9 个工具统一 E_ONBOARDING_REQUIRED，且不调用 ensureRunning/ensureInteractive', async () => {
+  const service = makeService()
+  const tools = createPhoneTools({
+    service,
+    onboarding: () => ({ status: 'pending', choice: '' }),
+  })
+  assert.equal(tools.length, 9)
+  for (const tool of tools) {
+    const value = (await tool.execute(TOOL_ARGS[tool.name]!, {} as never)) as any
+    assert.equal(value.ok, false, tool.name)
+    assert.equal(value.code, 'E_ONBOARDING_REQUIRED', tool.name)
+    assert.equal(value.retryable, false, tool.name)
+    assert.equal(value.onboarding.step, 'consent', tool.name)
+    assert.equal(value.onboarding.docs, 'docs/usage.md#首次使用', tool.name)
+    assert.deepEqual(
+      value.onboarding.options.map((option: { id: string }) => option.id),
+      ['emulator', 'redroid', 'attach', 'decline'],
+      tool.name,
+    )
+    const blocks = tool.output.render(TOOL_ARGS[tool.name]!, value as never)
+    assert.match((blocks[0] as { text: string }).text, /E_ONBOARDING_REQUIRED/, tool.name)
+  }
+  assert.equal(service.calls.length, 0, 'pending 时不得触碰 PhoneService')
+})
+
+test('onboarding declined：9 个工具返回 E_ONBOARDING_DECLINED，且不触碰 PhoneService', async () => {
+  const service = makeService()
+  const tools = createPhoneTools({
+    service,
+    onboarding: () => ({ status: 'declined', choice: 'attach' }),
+  })
+  for (const tool of tools) {
+    const value = (await tool.execute(TOOL_ARGS[tool.name]!, {} as never)) as any
+    assert.equal(value.ok, false, tool.name)
+    assert.equal(value.code, 'E_ONBOARDING_DECLINED', tool.name)
+    assert.equal(value.retryable, false, tool.name)
+    assert.match(value.message, /暂不使用|重新启用/, tool.name)
+  }
+  assert.equal(service.calls.length, 0)
+})
+
+test('onboarding accepted：放行并进入正常设备路径', async () => {
+  const service = makeService()
+  const tools = createPhoneTools({
+    service,
+    onboarding: () => ({ status: 'accepted', choice: 'emulator' }),
+  })
+  const tap = tools.find((tool) => tool.name === 'phone_tap')!
+  const value = (await tap.execute({ x: 5, y: 6 }, {} as never)) as any
+  assert.equal(value.ok, true)
+  assert.ok(service.calls.includes('tap:5,6'))
+})
+
 test('phone_status：runtime 不可用 → 结构化 E_RUNTIME_UNAVAILABLE + hints（与其它工具语义一致）', async () => {
   const service = makeService({
     status: async () => {

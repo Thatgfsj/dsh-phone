@@ -15,7 +15,7 @@ export function createTapTool(deps: ToolDeps): ToolDefinition {
     },
     output: { schema: RESULT_SCHEMA, render: (_args, value) => renderResult(value) },
     execute(args) {
-      return guarded(deps.service, async () => {
+      return guarded(deps, async () => {
         await deps.service.tap(args.x, args.y)
         return { message: `已点击 (${args.x}, ${args.y})` }
       })

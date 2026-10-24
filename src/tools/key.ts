@@ -18,7 +18,7 @@ export function createKeyTool(deps: ToolDeps): ToolDefinition {
     },
     output: { schema: RESULT_SCHEMA, render: (_args, value) => renderResult(value) },
     execute(args) {
-      return guarded(deps.service, async () => {
+      return guarded(deps, async () => {
         await deps.service.key(args.name)
         return { message: `已发送按键 ${args.name}` }
       })

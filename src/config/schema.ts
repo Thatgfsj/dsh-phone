@@ -13,6 +13,10 @@ import z from '@deepseek-ai/schemastery'
 /** runtime 取值（SPEC §6.1）。 */
 export const RUNTIME_VALUES = ['auto', 'redroid', 'emulator', 'attach'] as const
 
+/** 首次使用守卫（issue #30）：status/choice 都是 volatile，用户答复后实时生效。 */
+export const ONBOARDING_STATUS_VALUES = ['pending', 'accepted', 'declined'] as const
+export const ONBOARDING_CHOICE_VALUES = ['', 'emulator', 'redroid', 'attach'] as const
+
 /** 平台三运行时的默认安装/启动参数（SPEC §6.1，全部为普通配置字段）。 */
 export const Config = z.object({
   enabled: z
@@ -28,6 +32,20 @@ export const Config = z.object({
     ])
     .default('auto')
     .description('运行时策略：auto 按 SPEC §3.1 决策树选择'),
+  onboarding: z
+    .object({
+      status: z
+        .union([z.const('pending'), z.const('accepted'), z.const('declined')])
+        .default('pending')
+        .volatile()
+        .description('首次使用守卫：用户明确同意前不碰设备（pending/accepted/declined）'),
+      choice: z
+        .union([z.const(''), z.const('emulator'), z.const('redroid'), z.const('attach')])
+        .default('')
+        .volatile()
+        .description('用户选择的接入方式；accepted 且非空时等价显式 runtime'),
+    })
+    .default({ status: 'pending', choice: '' }),
   attach: z
     .object({
       endpoint: z
@@ -86,9 +104,11 @@ export type PhoneConfig = ReturnType<typeof Config>
 /** 配置命名空间 = profile 行 id（package.json name）。 */
 export const CONFIG_NS = 'dsh-phone'
 
-/** 可被设置页/接入助手实时写入的三个 volatile 路径（SPEC §6.2 R1）。 */
+/** 可被设置页/接入助手/首次使用守卫实时写入的 volatile 路径（SPEC §6.2 R1 + issue #30）。 */
 export const WRITABLE_CONFIG_PATHS = [
   ['attach', 'userHint'],
   ['attach', 'endpoint'],
   ['attach', 'resolved'],
+  ['onboarding', 'status'],
+  ['onboarding', 'choice'],
 ] as const
