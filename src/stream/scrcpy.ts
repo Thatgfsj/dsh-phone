@@ -12,8 +12,6 @@
  */
 
 import { readFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { AdbScrcpyClient, AdbScrcpyOptionsLatest } from '@yume-chan/adb-scrcpy'
 import { ReadableStream } from '@yume-chan/stream-extra'
@@ -21,21 +19,16 @@ import { ReadableStream } from '@yume-chan/stream-extra'
 import type { AdbConnection } from '../adb/types.ts'
 import { ScrcpyController } from './control.ts'
 import { queryDeviceSize } from './device-size.ts'
+import { ensureScrcpyServer, serverJarPath } from './jar-provider.ts'
 import { DEFAULT_STREAM_OPTIONS } from './types.ts'
 import type { StreamHandle, StreamInfo, StreamOptions, StreamSink } from './types.ts'
 
 /** 推到设备的固定路径（scrcpy 官方默认位置）。 */
 export const SERVER_JAR_REMOTE = '/data/local/tmp/scrcpy-server.jar'
 
-/** 允许用环境变量覆盖 jar 路径（打包/测试用）。 */
-export const SERVER_JAR_ENV = 'DSH_PHONE_SCRCPY_SERVER'
-
-const HERE = dirname(fileURLToPath(import.meta.url))
-
-/** 本地 scrcpy-server.jar 路径：<repo>/assets/scrcpy-server.jar（scripts/fetch-scrcpy-server.mjs 下载）。 */
-export function serverJarPath(): string {
-  return process.env[SERVER_JAR_ENV] ?? resolve(HERE, '..', '..', 'assets', 'scrcpy-server.jar')
-}
+// jar 路径/环境变量/懒下载集中在 jar-provider.ts；这里 re-export 保持既有 API。
+export { SERVER_JAR_ENV } from './jar-provider.ts'
+export { serverJarPath } from './jar-provider.ts'
 
 /** 校验并规范化 config.stream 参数（非法值回落到默认，避免把坏参数传给服务端）。 */
 export function normalizeStreamOptions(options: Partial<StreamOptions> = {}): StreamOptions {
@@ -134,12 +127,15 @@ async function startSession(
 }
 
 async function loadServerJar(): Promise<Uint8Array> {
+  // 懒下载：缺失时自动调用 scripts/fetch-scrcpy-server.mjs 的下载器（single-flight +
+  // sha256 校验 + 结构化错误），用户无需手工跑脚本。详见 jar-provider.ts。
+  const path = await ensureScrcpyServer()
   try {
-    const data = await readFile(serverJarPath())
+    const data = await readFile(path)
     return new Uint8Array(data)
   } catch (error) {
     throw new Error(
-      '找不到 scrcpy-server.jar（' + serverJarPath() + '）：请先运行 node scripts/fetch-scrcpy-server.mjs',
+      '读取 scrcpy-server.jar 失败（' + path + '）：请重试或手工运行 node scripts/fetch-scrcpy-server.mjs',
       { cause: error },
     )
   }

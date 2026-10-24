@@ -40,6 +40,7 @@ payload 不做解码、重编码、缩放、合并或拆分（仅因背压整包
 | `ws-messages.ts` | 文本消息形状校验（hello/touch/key/text/visibility/ping） |
 | `ws-connection.ts` | 单连接状态机：hello 时序、viewer attach/detach、DPH1 封帧、背压、异常清理 |
 | `ws.ts` | upgrade 路由工厂：`createStreamUpgradeHandler` / `createStreamUpgradeRoute` / `registerStreamRoute` |
+| `jar-provider.ts` | scrcpy-server.jar 懒下载（single-flight + sha256 + 超时 + 结构化错误） |
 | `index.ts` | **稳定入口**：host 只 import 本文件（startStream/startControlOnly/工厂/类型） |
 
 ## 3. scrcpy-server
@@ -51,6 +52,17 @@ payload 不做解码、重编码、缩放、合并或拆分（仅因背压整包
 - 许可：**Apache-2.0**（Genymobile/scrcpy 上游）。**jar 不提交仓库**，由 `.gitignore` 的
   `assets/scrcpy-server*.jar` 忽略；也不进入 npm 包（`files` 不含 assets）。
 
+**无需手工跑脚本**：首次 `startStream` / `startControlOnly` 时若 `assets/scrcpy-server.jar` 缺失，
+stream 层会自动调用同一个下载器（`src/stream/jar-provider.ts`）：
+
+- **同进程 single-flight**：并发启动共享一次下载；失败后清除 in-flight，下次调用可重试；
+- **sha256 校验**：下载后按固定校验和验证，不匹配则删除坏文件并报错；
+- **超时**：默认 180s，超时错误可重试；
+- **结构化错误**：`ScrcpyServerUnavailableError`（`code=E_SCRCPY_SERVER_UNAVAILABLE|E_SCRCPY_SERVER_TIMEOUT`、
+  `retryable`、`manualCommand='node scripts/fetch-scrcpy-server.mjs'`），WS 层把 message/重试标记下发给客户端。
+
+脚本仍保留，用于**离线/预下载/排障**（例如 CI 缓存、无网环境先手工放 jar）：
+
 ```sh
 node scripts/fetch-scrcpy-server.mjs          # 下载 → 校验 sha256 → assets/scrcpy-server.jar
 node scripts/fetch-scrcpy-server.mjs --check  # 只校验本地文件（不联网）
@@ -60,7 +72,8 @@ node scripts/fetch-scrcpy-server.mjs --mirror https://ghproxy.net/  # 追加镜�
 
 下载顺序：官方 GitHub URL → 默认镜像前缀（`ghproxy.net` / `ghfast.top`）→ `--mirror` 追加项；
 只有 sha256 一致才原子替换目标文件。注意：**镜像可用性未验证**（见 §6）。
-运行时可用环境变量 `DSH_PHONE_SCRCPY_SERVER` 覆盖 jar 路径（测试/打包用）。
+运行时可用环境变量 `DSH_PHONE_SCRCPY_SERVER` 覆盖 jar 路径（测试/打包用）；**该路径存在时不做自动
+下载**——文件缺失或 sha256 不匹配会返回结构化错误（提示修正路径或取消环境变量）。
 
 ## 4. DPH1 二进制帧（逐字节对齐 docs/protocol.md §2.2）
 
@@ -173,8 +186,9 @@ node --test tests/stream/*.test.ts
 覆盖：DPH1 字节序/类型映射/pts 回绕与负值/超大包、控制消息映射与中文文本、RFC 6455 握手向量与
 掩码/分片/ping-pong/close、WS 鉴权拒绝、hello 校验与超时、viewer 计数与 5s 宽限、**断开/隐藏清理**、
 **新连接替换旧连接**、异常流错误码、`wm size` 解析/缓存与 ready device 字段序列化、触摸设备→视频坐标换算、
-scrcpy-server 下载脚本的 sha256/--check/参数解析。
-全部使用假 adb/假 socket，不依赖真机、scrcpy 二进制或网络（下载脚本测试只做本地文件校验）。
+scrcpy-server 下载脚本的 sha256/--check/参数解析、**jar 懒下载**（已存在跳过、成功、sha256 失败删除、
+下载器异常、超时重试、并发 single-flight、环境变量覆盖路径）。
+全部使用假 adb/假 socket/假下载器，不依赖真机、scrcpy 二进制或网络（下载脚本测试只做本地文件校验）。
 
 ## 8. 未验证项（本机条件限制）
 
@@ -190,3 +204,7 @@ scrcpy-server 下载脚本的 sha256/--check/参数解析。
 7. `AdbConnection` 的落点是 `src/adb/types.ts`（docs/architecture.md 写的 `transport.ts` 并未
    re-export）；runtime #15 合并后已按真实类型跑通 typecheck。若后续 runtime 在 transport.ts 补
    re-export，本层可切回。
+8. **懒下载**：Host 侧默认路径已本机实测（官方 URL 下载 → sha256 → 二次调用复用），单测覆盖
+   注入下载器的成功/校验失败/超时/异常/并发；**未在真机首次启动端到端验证**。首次下载依赖外网，
+   离线环境会返回结构化错误（含手工命令），可用 `DSH_PHONE_SCRCPY_SERVER` 或预先跑脚本兜底；
+   默认 180s 超时对慢网是否足够未实测。
