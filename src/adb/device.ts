@@ -14,6 +14,12 @@ const DEVICE_TMP_DIR = '/sdcard'
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 const DEFAULT_SCREENSHOT_TIMEOUT_MS = 30_000
 const DEFAULT_DUMP_TIMEOUT_MS = 30_000
+/**
+ * 冷启动窗口内截图重试（issue #44）：adbd 可连但系统未 boot_completed 时，
+ * screencap/base64 可能返回空或错误文本。首次失败后再试，共 3 次。
+ */
+const DEFAULT_SCREENSHOT_ATTEMPTS = 3
+const DEFAULT_SCREENSHOT_RETRY_DELAY_MS = 500
 
 /** 常用按键名 → Android keyevent 名。 */
 export const KEY_NAMES = {
@@ -46,11 +52,20 @@ function isPng(bytes: Uint8Array): boolean {
   return PNG_SIGNATURE.every((value, index) => bytes[index] === value)
 }
 
+function deviceNotReady(message: string, cause?: unknown): AdbError {
+  return new AdbError('E_DEVICE_NOT_READY: ' + message, 'device-not-ready', {
+    cause,
+    retryable: true,
+  })
+}
+
 function decodeBase64(text: string): Uint8Array {
   const compact = text.replace(/\s+/g, '')
-  if (!compact) return new Uint8Array(0)
+  if (!compact) {
+    throw deviceNotReady('截图输出为空（设备可能仍在开机/锁屏，稍后重试）')
+  }
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) {
-    throw new AdbError('设备返回的 base64 内容非法（可能混入了错误输出）', 'protocol')
+    throw deviceNotReady('截图输出不是合法 base64（设备可能仍在开机，输出尚未就绪）')
   }
   const buffer = Buffer.from(compact, 'base64')
   return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
@@ -70,6 +85,33 @@ function keyEventFor(name: string): string {
   if (normalized.startsWith('KEYCODE_')) return normalized
   const mapped = KEY_NAMES[normalized as KeyName]
   return mapped ?? `KEYCODE_${normalized}`
+}
+
+function defaultSleep(delayMs: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, delayMs)
+    timer.unref?.()
+  })
+}
+
+function isRetryableCaptureError(error: AdbError): boolean {
+  return (
+    error.retryable ||
+    error.code === 'device-not-ready' ||
+    error.code === 'protocol' ||
+    error.code === 'timeout' ||
+    error.code === 'closed'
+  )
+}
+
+export interface ScreenshotOptions {
+  timeoutMs?: number
+  /** 总尝试次数（含首次），默认 3。 */
+  attempts?: number
+  /** 重试基础延迟（第 n 次重试等待 n * retryDelayMs），默认 500ms。 */
+  retryDelayMs?: number
+  /** 注入 sleep（单测用）。 */
+  sleep?(delayMs: number): Promise<void>
 }
 
 export interface AdbDeviceOptions {
@@ -108,23 +150,48 @@ export class AdbDevice {
    * 截屏：`screencap -p` 落到设备临时文件 → `base64` 取回 → 删除临时文件。
    * 返回 PNG 原始字节（供 phone_screenshot / WS 图像通道）。
    */
-  async screenshot(options: { timeoutMs?: number } = {}): Promise<Uint8Array> {
+  async screenshot(options: ScreenshotOptions = {}): Promise<Uint8Array> {
+    const attempts = Math.max(1, options.attempts ?? DEFAULT_SCREENSHOT_ATTEMPTS)
+    const retryDelayMs = options.retryDelayMs ?? DEFAULT_SCREENSHOT_RETRY_DELAY_MS
+    const sleep = options.sleep ?? defaultSleep
     const timeoutMs = options.timeoutMs ?? this.#defaultTimeoutMs
+    let lastError: AdbError | undefined
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        return await this.#captureOnce(timeoutMs)
+      } catch (error) {
+        const failure =
+          error instanceof AdbError
+            ? error
+            : new AdbError('截图失败: ' + String(error), 'shell', { cause: error })
+        lastError = failure
+        if (attempt >= attempts || !isRetryableCaptureError(failure)) {
+          break
+        }
+        // 冷启动窗口内首次失败多为设备未就绪：退避后重试
+        await sleep(retryDelayMs * attempt)
+      }
+    }
+    throw deviceNotReady(
+      '连续 ' + attempts + ' 次截图失败（' + (lastError?.message ?? '未知原因') + '），稍后重试',
+      lastError,
+    )
+  }
+
+  /** 单次截图尝试：screencap 落盘 → base64 取回 → 删除临时文件。 */
+  async #captureOnce(timeoutMs: number): Promise<Uint8Array> {
     const path = this.tempPath('png')
     try {
-      await this.connection.shell(`screencap -p ${path}`, { timeoutMs })
-      const base64 = await this.connection.shell(`base64 ${path}`, { timeoutMs })
+      await this.connection.shell('screencap -p ' + path, { timeoutMs })
+      const base64 = await this.connection.shell('base64 ' + path, { timeoutMs })
       const bytes = decodeBase64(base64)
       if (!isPng(bytes)) {
-        throw new AdbError(
-          `screencap 返回内容不是有效 PNG（${bytes.length} 字节）`,
-          'protocol',
-        )
+        throw deviceNotReady('screencap 输出不是有效 PNG（' + bytes.length + ' 字节）')
       }
       return bytes
     } finally {
       await this.connection
-        .shell(`rm -f ${path}`, { timeoutMs: 5_000 })
+        .shell('rm -f ' + path, { timeoutMs: 5_000 })
         .catch(() => undefined)
     }
   }

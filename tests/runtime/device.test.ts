@@ -30,37 +30,81 @@ describe('AdbDevice：截图', () => {
     assert.equal(connection.commands[2], connection.commands[1]!.replace('base64', 'rm -f'))
   })
 
-  test('screencap 失败（无内容）时抛错，但临时文件仍被删除', async () => {
+  test('screencap 输出为空 → 重试后报 E_DEVICE_NOT_READY（可重试），临时文件每次都被删除', async () => {
     const connection = new FakeAdbConnection()
     connection
       .on(/^screencap -p /, '')
       .on(/^base64 /, '')
       .on(/^rm -f /, '')
     const device = new AdbDevice(connection)
-    await assert.rejects(device.screenshot(), (error: unknown) => {
-      assert.ok(error instanceof AdbError)
-      assert.equal(error.code, 'protocol')
-      return true
-    })
+    const sleeps: number[] = []
+    await assert.rejects(
+      device.screenshot({ sleep: async (ms) => { sleeps.push(ms) } }),
+      (error: unknown) => {
+        assert.ok(error instanceof AdbError)
+        assert.equal(error.code, 'device-not-ready')
+        assert.equal(error.retryable, true)
+        assert.match(error.message, /E_DEVICE_NOT_READY/)
+        return true
+      },
+    )
+    // 3 次尝试（默认），2 次退避
+    assert.deepEqual(sleeps, [500, 1000])
+    assert.equal(connection.commands.filter((cmd) => cmd.startsWith('screencap')).length, 3)
+    assert.equal(connection.commands.filter((cmd) => cmd.startsWith('rm -f')).length, 3)
     assert.match(connection.commands.at(-1)!, /^rm -f /)
   })
 
-  test('base64 内容混入错误输出 → 抛 protocol 错误', async () => {
+  test('冷启动：首次 base64 输出异常、第二次成功（issue #44）', async () => {
+    const connection = new FakeAdbConnection()
+    let base64Calls = 0
+    connection
+      .on(/^screencap -p /, '')
+      .on(/^base64 /, () => {
+        base64Calls += 1
+        return base64Calls === 1 ? 'base64: /sdcard/x.png: No such file or directory' : base64(PNG)
+      })
+      .on(/^rm -f /, '')
+    const device = new AdbDevice(connection)
+    const sleeps: number[] = []
+    const bytes = await device.screenshot({ sleep: async (ms) => { sleeps.push(ms) } })
+    assert.deepEqual([...bytes], [...PNG])
+    assert.equal(base64Calls, 2)
+    assert.deepEqual(sleeps, [500])
+  })
+
+  test('base64 内容混入错误输出 → 报可重试的 E_DEVICE_NOT_READY（不是“base64 非法”）', async () => {
     const connection = new FakeAdbConnection()
     connection
       .on(/^screencap /, '')
-      .on(/^base64 /, 'base64: /sdcard/x.png: No such file or directory\n')
+      .on(/^base64 /, 'base64: /sdcard/x.png: No such file or directory')
       .on(/^rm -f /, '')
     const device = new AdbDevice(connection)
-    await assert.rejects(device.screenshot(), /base64 内容非法/)
+    await assert.rejects(
+      device.screenshot({ sleep: async () => undefined }),
+      (error: unknown) => {
+        assert.ok(error instanceof AdbError)
+        assert.equal(error.code, 'device-not-ready')
+        assert.doesNotMatch(error.message, /base64 内容非法/)
+        assert.match(error.message, /设备可能仍在开机|连续 3 次截图失败/)
+        return true
+      },
+    )
   })
 
-  test('非 PNG 内容（被文本污染）→ 抛 protocol 错误', async () => {
+  test('非 PNG 内容（被文本污染）→ 报可重试的 E_DEVICE_NOT_READY', async () => {
     const connection = new FakeAdbConnection()
     const bad = new Uint8Array([0x01, 0x02, 0x03])
     connection.on(/^screencap /, '').on(/^base64 /, base64(bad)).on(/^rm -f /, '')
     const device = new AdbDevice(connection)
-    await assert.rejects(device.screenshot(), /不是有效 PNG/)
+    await assert.rejects(
+      device.screenshot({ sleep: async () => undefined }),
+      (error: unknown) => {
+        assert.ok(error instanceof AdbError)
+        assert.equal(error.code, 'device-not-ready')
+        return true
+      },
+    )
   })
 })
 

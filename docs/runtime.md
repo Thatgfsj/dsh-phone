@@ -133,6 +133,31 @@ runtime 层本身**无状态**：`detectRuntime` / `resolveRuntime` 每次调用
 - 暂停失败不改变状态、重排 idle 稍后重试；启动/唤醒失败回到原状态并把错误抛给调用方。
 - 时钟可注入（`Clock`），单测用 `ManualClock` 验证 5min/30min，不真等。
 
+### 4.1 冷启动窗口内的重试（issue #44）
+
+真实 emulator 冷启动验收发现：adbd 端口很快可连，但系统尚未 `boot_completed`，
+第一次 ADB 握手 8s 超时、随后截图返回异常输出，等约 100s 后才能成功——旧实现直接抛错，用户需手工重试。
+现在分三层处理：
+
+1. **连接/握手重试**（`src/phone/boot-retry.ts` + `PhoneService.#connectDuringBoot`）：
+   boot 窗口内按 **500ms → 1s → 2s → 4s → 8s（封顶）** 退避重试 ADB connect，预算
+   `bootTimeoutMs - 20s`（默认 120s − 20s），给每次握手自身（最长 8s）留余量；
+   耗尽后才抛错，错误文案带「已尝试 N 次 / 约 Xs / 最后一次原因」并标 `retryable`。
+   - 只重试暂时性错误（`AdbError` 全部 / `retryable:true` / timeout/connect/closed/device-not-ready）；
+     普通配置错误立即失败（不把真错误拖 120s）。
+   - <BTruntime 不恢复 / adapter 启动失败` 不在此重试范围（那是决策树/安装问题，仍走 `E_RUNTIME_UNAVAILABLE`）。
+2. **截图重试**（`AdbDevice.screenshot`）：默认 3 次尝试，失败后按 500ms、1000ms 退避重试；
+   空输出 / 非法 base64 / 非 PNG 一律归类为 `E_DEVICE_NOT_READY`（`AdbError.code='device-not-ready'`，
+   `retryable=true`），不再报「base64 非法」。耗尽后错误文案为「设备尚未就绪：连续 3 次截图失败…」。
+   - HTTP `GET /screenshot` 对 `device-not-ready` 返回 **200 + E_BOOTING（retryable）**；
+     工具层 `failureFrom` 同样映射为 `E_BOOTING`（与 booting 中间态一致，Agent 等待后重试）。
+3. **lastError 清理**：`PhoneLifecycle` 在 boot 成功进入 running 时显式清空 `lastError`；
+   `PhoneService.status()` 在 running 时不再回退展示历史探测/启动错误（只保留当前状态相关错误）。
+
+取舍：没有采用「轮询 `sys.boot_completed` 阻塞启动」的方案——它会把 booting 中间态变成长时间无反馈，
+且对 attach/真机（部分设备该属性异常）不友好；退避重试 + 截图重试在真实设备上同样能自愈，且状态仍可观测。
+
+
 宿主（`src/phone/service.ts`，task-4）只需提供 `LifecycleHooks`：
 `start = adapter.ensureRunning + adb.connect + AdbDevice 就绪`，`pause/resume/stop` 调 adapter 并管理连接。
 
@@ -140,8 +165,9 @@ runtime 层本身**无状态**：`detectRuntime` / `resolveRuntime` 每次调用
 
 ```sh
 npx tsc --noEmit                 # 通过
-node --test                      # 262 通过 + 5 跳过（共 267）：transport/device/detect/adapters/state
+node --test                      # 306 通过 + 5 跳过（共 311）：transport/device/detect/adapters/state
                                  # + install-guide 20 例（命令快照 + 各平台 hints + 防漂移）
+                                 # + boot-retry 11 例（退避序列、握手重试、lastError 清理、截图重试）
                                  # + 既有 host/stream/client 用例
 node scripts/check-file-lines.mjs
 ```
@@ -164,6 +190,7 @@ sdkmanager / avdmanager / docker run / attach 端口探测 / scrcpy 下载命令
 | Windows WHPX 检测 | 未在 Windows 验证 | `emulator -accel-check` 输出匹配是启发式 |
 | 真实 Android 设备的 `screencap`/`uiautomator` | 未实测 | 命令与临时文件清理逻辑按 toybox 行为编写，假连接覆盖了流程 |
 | 安装指引中的 sdkmanager/avdmanager/emulator/docker run 命令文本 | 未在本机逐条执行 | 按官方用法与适配器参数生成；本机无 emulator/Docker。命令快照测试只保证文案不漂移，不代表已跑通 |
+| 冷启动重试的真实时序 | 未在真 emulator 复测（本机无 AVD） | 退避序列/重试次数/截图重试用假实现覆盖；真实 boot_completed 时间因机器而异，120s 窗口可配置 |
 
 ## 7. 设计取舍 / 与文档的偏差
 
@@ -185,6 +212,9 @@ sdkmanager / avdmanager / docker run / attach 端口探测 / scrcpy 下载命令
    （`emulator.size` 仍是 `~1.7GB`）。
 8. **非 Linux 的 redroid**：只给「WSL2 进阶、默认不推荐」说明，不给 `docker run`，避免用户误以为
    Windows/macOS 可以直接跑 redroid。
+9. **冷启动重试用固定预算而非轮询 boot_completed**（#44）：见 §4.1；sleep 可注入，单测不真的等。
+10. **截图耗尽后的错误码**：新增 `AdbError.code='device-not-ready'`（可重试），HTTP/工具层映射为
+   `E_BOOTING`，不新造协议错误码（复用 docs/protocol.md §3 既有语义）。
 
 ## 8. 给 Host 层的最小接入示例
 
