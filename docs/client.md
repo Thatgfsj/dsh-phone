@@ -15,6 +15,8 @@ src/client/
   auto-open.ts   onboarding accepted 时 best-effort 自动打开（≤10s 静默重试）
   gate.ts        面板门控判定（checking/ready/pending/declined/unavailable）
   empty-state.ts 面板空态：可读文案 + 内嵌 onboarding 三态卡
+  boot.ts        booting 进度模型 + 1s /status 轮询器 + 进度 UI（#39）
+  panel-status.ts 面板状态徽章文案/色调（从 panel-view 拆出，控制行数）
   settings.ts    设置页（onboarding 卡片/一句话/解析状态/重置/打开面板）
   settings-api.ts HTTP 客户端 + 409 冲突重试 + onboarding 类型 + 状态容错读取
   onboarding.ts  首次使用引导：三态描述 + 写入流程（纯函数）+ 卡片组件
@@ -73,6 +75,12 @@ id:'dsh-phone', order:60, label: () => t('settings.section') }, PhoneSettings))`
 （`credentials:'same-origin'`）。409 `E_CONFIG_CONFLICT` → 重新 GET 取 revision 后
 **重试一次**，再失败显示可读错误。「重置解析」写 `attach.resolved:false`，仅用户点击，
 带 `window.confirm`，Agent 侧不会调用。
+- **开关只读展示**（#39 条目 6 / host #52）：`GET /config` 的可选 `enabled?: boolean` 映射为
+  已启用 / 已关闭 / 未知（Host 未暴露）。开关变更仍需在插件管理中修改配置并重载插件
+  （`enabled` 非 volatile）；设置页只展示状态 + 提示，不提供写入。
+  `enabled === false` 时 Host 只提供只读 `GET /config`，因此 UI 提前隐藏 onboarding 卡 /
+  一句话 / 重置解析 / 打开面板等写入与联动区，仅保留只读状态行 + 刷新按钮，避免触发 403 `E_NO_WEB`。
+
 
 ### 1.3 会话头部入口与自动打开（issue #45）
 
@@ -194,6 +202,20 @@ tab body 挂载时先 `GET /dsh-phone/api/config`，由 `describePanelGate()` �
 - 面板不读 `GET /status`，pending 时该接口的 `200 + ok:false E_ONBOARDING_REQUIRED` 不影响面板；
   设置页由 `readRunStatus()` 容错。
 
+### 4.2 booting 进度（#39 条目 4）
+
+冷启动（emulator 20–100s）期间面板不再只有一个转圈：
+
+- 收到 WS `state{booting}` 后开始显示进度；若该帧带 `bootMs`（未来 Host 可加）直接用它，
+  否则每 1s 轮询 `GET /dsh-phone/api/status` 取 `PhoneStatus.bootMs`（`bootMs` 是已耗时）。
+- `boot.ts` 的 `describeBootProgress(bootMs)` 生成：已等待秒数、0–120s 进度百分比、阶段文案
+  （<15s 拉起 / 15–45s 等待 adbd / 45–90s 首次冷启动较慢 / ≥90s 慢启动提示）与超时标记；
+  进度条与徽章沿用 `--dsw-alias-*` token。
+- 仅当**面板可见且 booting** 时轮询：`ready/running/paused/stopped` 或面板隐藏/关闭/卸载
+  （`onState` hidden/closed、effect cleanup）都会 `stop()`；读取 `/status` 失败不报错，
+  继续轮询并用本地 elapsed 兜底，避免 Host 正在启动时的瞬时 403/503 打断 UI。
+- `ready` 后清空进度；`state.phase` 文案见 i18n `panel.boot.*`。
+
 ## 5. 首次使用引导（onboarding，issue #31）
 
 配合 Host 侧 onboarding 守卫（issue #30）。契约：
@@ -251,7 +273,8 @@ node scripts/check-file-lines.mjs
 重连退避与抖动、可见性门控、不可见断流（`close(1000)`、无重连）、心跳半开重连、
 设备坐标换算（letterbox/夹取）、WebCodecs configure/chunk 参数、codec string、I420→RGBA、软解真实关键帧、
 header 入口注册与点击→openTab、auto-open 三态条件（pending 打开 / declined 跳过 / accepted 打开）
-与重试/超时/不抛错、面板空态三态判定与文案、初次配置读取重试（首帧不闪错）。
+与重试/超时/不抛错、面板空态三态判定与文案、初次配置读取重试（首帧不闪错）、
+booting 进度分段/百分比/超时文案与轮询器生命周期（假 clock/status）、enabled 三态展示判定与写入禁用。
 
 ## 7. 未验证项（真实浏览器 / 真实 Host 待 task-8）
 1. WebCodecs 在 Chrome/Firefox/Safari 对 `avc.format='annexb'` + in-band SPS/PPS 的接受度；
@@ -268,5 +291,7 @@ header 入口注册与点击→openTab、auto-open 三态条件（pending 打开
 8. 会话头部按钮在真实 header 的可见性/间距（utilities 右对齐列表）、点击后右栏展开行为未验证（#8）。
 9. 自动打开的 adopt 时机（10s 窗口是否足够）未验证；仅单测覆盖重试/超时/静默失败。
 10. pending 自动打开 + Host 冷启动竞态下的真实首屏顺序（是否确实先卡片、无错误闪动）需 #8 真机确认。
+11. booting 进度依赖 `PhoneStatus.bootMs` 的真实刷新频率与冷启动时长（本机单测用假 clock；#44 合并后需 rebase 复验语义）。
+12. `enabled` 字段已由 host #52（#53 合并）在 `GET /config` 暴露；真实页面下 enabled=true/false 的只读展示与写入区隐藏未验证（#8）。
 11. 动态安装后「刷新页面 → 入口/自动打开出现」的真实页面流程未验证（#48 依据 DSH 客户端模块加载模型与
     用户反馈整理；「刷新不中断会话」为设计语义，Host 侧会话与实例状态不受页面刷新影响）。

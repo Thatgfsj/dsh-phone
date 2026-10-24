@@ -106,6 +106,19 @@ export const zh: Dict = {
   'panel.empty.unavailableHint': '请确认插件已安装并在 profile 中启用，然后点「重新检测」。',
   'panel.empty.settingsHint': '也可以随时在 设置 → 手机 中完成同样的操作。',
   'panel.empty.retry': '重新检测',
+  'panel.boot.progress': '正在启动 Android 实例… 已等待 {seconds}s',
+  'panel.boot.placeholder': '正在启动 Android 实例（首次冷启动约 20–100s，上限约 120s）',
+  'panel.boot.percent': '{percent}%',
+  'panel.boot.phase.starting': '正在拉起实例…',
+  'panel.boot.phase.warming': '实例启动中，等待 adbd 就绪…',
+  'panel.boot.phase.firstBoot': '首次冷启动较慢（系统首次 boot 需要更久）…',
+  'panel.boot.phase.slow': '启动已超过 90s，请检查日志或实例状态（上限约 120s）',
+  'settings.state.enabled': '开关',
+  'settings.enabled.enabled': '已启用',
+  'settings.enabled.disabled': '已关闭',
+  'settings.enabled.unknown': '未知（Host 未暴露）',
+  'settings.enabled.hint': '开关为只读展示；启用/关闭需在插件管理中修改配置并重载插件（enabled 非 volatile）。',
+  'settings.enabled.disabledHint': '插件已关闭：仅展示只读配置，写入与视频流均不可用。启用请在插件管理中修改并重载。',
 }
 
 export const en: Dict = {
@@ -198,6 +211,19 @@ export const en: Dict = {
   'panel.empty.unavailableHint': 'Make sure the plugin is installed and enabled in the profile, then press Retry.',
   'panel.empty.settingsHint': 'The same actions are also available under Settings → Phone.',
   'panel.empty.retry': 'Retry',
+  'panel.boot.progress': 'Starting the Android instance… waiting {seconds}s',
+  'panel.boot.placeholder': 'Starting the Android instance (first cold boot takes 20–100s, ceiling about 120s)',
+  'panel.boot.percent': '{percent}%',
+  'panel.boot.phase.starting': 'Launching the instance…',
+  'panel.boot.phase.warming': 'Instance starting, waiting for adbd…',
+  'panel.boot.phase.firstBoot': 'First cold boot is slower (the system image boot takes longer)…',
+  'panel.boot.phase.slow': 'Boot passed 90s — check the logs or instance state (ceiling about 120s)',
+  'settings.state.enabled': 'Switch',
+  'settings.enabled.enabled': 'Enabled',
+  'settings.enabled.disabled': 'Disabled',
+  'settings.enabled.unknown': 'Unknown (Host does not expose it)',
+  'settings.enabled.hint': 'The switch is read-only here; enable/disable it in the plugin manager and reload the plugin (enabled is not volatile).',
+  'settings.enabled.disabledHint': 'The plugin is disabled: configuration is read-only and streaming is unavailable. Enable it in the plugin manager and reload.',
 }
 
 /** Choose a dictionary for one active locale id, defaulting to English. */
