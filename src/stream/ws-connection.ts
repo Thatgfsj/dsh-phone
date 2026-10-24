@@ -5,6 +5,7 @@
  * 由 ws.ts 的路由工厂创建；每个 WebSocket 一个实例。
  */
 
+import { peekDeviceSize } from './device-size.ts'
 import { encodeFrame, FRAME_TYPE, microsToTicks, StreamClock } from './frames.ts'
 import type { PhoneStreamService, StreamOptions, StreamSink } from './types.ts'
 import type { WebSocketConnection } from './websocket.ts'
@@ -134,10 +135,14 @@ export class StreamConnection {
         return
       }
       this.#release = release
+      // 设备真实分辨率来自 scrcpy 启动时的 wm size 查询（device-size.ts 进程级快照）；
+      // 解析失败则省略字段，客户端回退 hello viewport（向后兼容）。
+      const device = peekDeviceSize()
       this.#send({
         type: 'ready',
         width: this.#viewport.w,
         height: this.#viewport.h,
+        ...(device ? { deviceWidth: device.width, deviceHeight: device.height } : {}),
         codec: 'h264',
         maxSize: this.#options.options.maxSize,
         maxFps: this.#options.options.maxFps,

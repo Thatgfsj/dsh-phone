@@ -35,9 +35,13 @@ export interface StreamSink {
 
 /** 流建立后的元信息（scrcpy video metadata，用于 ready 消息）。 */
 export interface StreamInfo {
+  /** scrcpy 视频帧尺寸（可能被 maxSize 降采样）。 */
   width: number
   height: number
   codec: 'h264'
+  /** 设备物理分辨率（wm size）；解析失败时省略。 */
+  deviceWidth?: number
+  deviceHeight?: number
 }
 
 /**

@@ -87,6 +87,25 @@ test('按键名解析：大小写不敏感、别名、未知名报错', () => {
   assert.throws(() => resolveKeyCode('NOT_A_KEY'), /未知按键名/)
 })
 
+test('设备坐标按 wm size 换算为 scrcpy 视频坐标（降采样不偏移）', async () => {
+  const { calls, writer } = fakeWriter()
+  const controller = new ScrcpyController(writer as never, { width: 720, height: 1600 })
+  controller.setDeviceSize(1080, 2400)
+  assert.deepEqual(controller.deviceSize, { width: 1080, height: 2400 })
+
+  await controller.injectTouch('down', 540, 1200)
+  const message = calls[0]?.payload as Record<string, unknown>
+  assert.equal(message.pointerX, 360)
+  assert.equal(message.pointerY, 800)
+  assert.equal(message.videoWidth, 720)
+  assert.equal(message.videoHeight, 1600)
+
+  await controller.injectTouch('move', 5000, 5000)
+  const clamped = calls[1]?.payload as Record<string, unknown>
+  assert.equal(clamped.pointerX, 719, '按视频坐标夹到 720-1')
+  assert.equal(clamped.pointerY, 1599, '按视频坐标夹到 1600-1')
+})
+
 test('control 关闭后注入报错而不是静默丢弃', async () => {
   const { writer } = fakeWriter()
   const controller = new ScrcpyController(writer as never, { width: 720, height: 1280 })
