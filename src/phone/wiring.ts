@@ -11,7 +11,7 @@
 import { AdbDevice } from '../adb/device.ts'
 import { connect, disconnect } from '../adb/transport.ts'
 import type { AdbConnection } from '../adb/types.ts'
-import { effectiveRuntime } from '../config/onboarding.ts'
+import { effectiveRuntime, isOnboardingChoice, isOnboardingStatus } from '../config/onboarding.ts'
 import type { OnboardingState } from '../config/onboarding.ts'
 import type { PhoneConfig } from '../config/schema.ts'
 import { createCommandRunner } from '../runtime/command.ts'
@@ -24,9 +24,22 @@ import type { ServiceConfig, StreamSession, StreamSessionOptions } from './servi
 import { PhoneLifecycle } from './state.ts'
 import { PhoneService } from './service.ts'
 
-/** 实时读取 onboarding 状态（两个 volatile 叶子）。 */
+/** 实时读取 onboarding 状态（两个 volatile 叶子；旧配置/缺字段按 pending 容错）。 */
 export function readOnboarding(config: PhoneConfig): OnboardingState {
-  return { status: config.onboarding.status.get(), choice: config.onboarding.choice.get() }
+  const onboarding = (
+    config as {
+      onboarding?: {
+        status?: { get?: () => unknown }
+        choice?: { get?: () => unknown }
+      }
+    }
+  ).onboarding
+  const status = onboarding?.status?.get?.()
+  const choice = onboarding?.choice?.get?.()
+  return {
+    status: isOnboardingStatus(status) ? status : 'pending',
+    choice: isOnboardingChoice(choice) ? choice : '',
+  }
 }
 
 /**

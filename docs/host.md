@@ -39,6 +39,8 @@ Host 不直接读写 `cordis.patch.yml`，不自行实现 runtime/收流；runti
 | `attach.endpoint` | `""` | ✅ | 接入助手验证后单键写入 |
 | `attach.userHint` | `""` | ✅ | 用户一句话，原文永久保留（R2） |
 | `attach.resolved` | `false` | ✅ | 解析完成哨兵（R3；重置权属用户） |
+| `onboarding.status` | `pending` | ✅ | 首次使用守卫：pending/accepted/declined（旧配置无该段 → pending） |
+| `onboarding.choice` | `""` | ✅ | 用户选择的接入方式：''/emulator/redroid/attach；accepted 且非空时等价显式 runtime |
 | `redroid.image` | `redroid/redroid:14-latest` | ❌ | |
 | `redroid.memLimit` | `2g` | ❌ | |
 | `redroid.vcpuLimit` | `2` | ❌ | |
@@ -55,8 +57,8 @@ Host 不直接读写 `cordis.patch.yml`，不自行实现 runtime/收流；runti
   `ctx.settings.mutate('dsh-phone', [{op:'set',path,value}], revision)` → 再次 describe 回读比对（R4a）。
   dsh-settings 内部经 configEditor 用 YAML Document 保注释/顺序、原子写、失败回滚；本插件**禁止**
   自行读写 `cordis.patch.yml`（calibration §2.3）。
-- **只允许三个键**：`attach.endpoint` / `attach.resolved` / `attach.userHint`（R1）。其它路径返回
-  `400 E_BAD_PATH`，不会调用 mutate。
+- **只允许五个键**：`attach.endpoint` / `attach.resolved` / `attach.userHint`（R1）+
+  `onboarding.status` / `onboarding.choice`（issue #30）。其它路径返回 `400 E_BAD_PATH`，不会调用 mutate。
 - **冲突**：revision 不匹配时重新 describe 后用新 revision 重试一次；再次冲突返回
   `409 E_CONFIG_CONFLICT`（retryable=true），由客户端刷新后重试。
 - **R5 先验证后落盘**：`POST /attach/verify` 成功的 endpoint 才被记入进程内 `verified` 集合；
@@ -89,7 +91,27 @@ Host 不直接读写 `cordis.patch.yml`，不自行实现 runtime/收流；runti
 2. 执行设备动作；
 3. 异常 → 结构化错误（runtime 不可用带安装指引；超时可重试；其余 `E_DEVICE_COMMAND`）。
 
-### 3.1 phone_shell 审批
+### 3.1 首次使用守卫（onboarding，issue #30）
+
+顺序：**onboarding 检查 → ensureInteractive（懒启动/booting 中间态）→ 设备动作**。
+`onboarding.status !== 'accepted'` 时：
+
+| status | 工具返回 | 副作用 |
+|---|---|---|
+| `pending` | `{ok:false, code:'E_ONBOARDING_REQUIRED', retryable:false, onboarding:{step:'consent'|'choose-runtime', question, options:[emulator,redroid,attach,decline], install:{emulator:{commands,size:'~1.7GB'},redroid:{commands},attach:{hint}}, docs:'docs/usage.md#首次使用'}}` | **无**：不调 `ensureRunning/ensureInteractive`、不启动/安装、不写配置 |
+| `declined` | `{ok:false, code:'E_ONBOARDING_DECLINED', retryable:false, message:'…可在设置页重新启用'}` | 无 |
+
+`accepted` 后：`choice` 非空 → wiring 的 `effectiveRuntime()` 等价显式 `runtime=choice`（只走该 kind，
+跳过 auto 决策树其余分支）；`choice` 空 → 原 `runtime` 策略（auto 或显式）。运行时不可用仍是
+`E_RUNTIME_UNAVAILABLE` + 安装指引。
+
+- 守卫状态从 volatile 配置**每次调用实时读取**（`.get()`），写入后无需重载插件。
+- 工具输出 schema 增加 `onboarding`（JSON）字段；`phone_status` 的守卫返回值同时带
+  `state:'stopped'/runtime:'attach'/platform:'other'/lastError`，保持其输出 schema 必填字段完整。
+- `GET /status` 与 `GET /screenshot` 在 pending/declined 时返回 200 + 同一结构化错误体
+  （面板展示引导而不报错）；不触发 `service.status()/ensureInteractive()`。
+
+### 3.2 phone_shell 审批
 
 `src/index.ts` 顶部注册 `tools/pre-execute` waterfall：`exec.name==='phone_shell'` 且
 `evaluateShellCommand(cmd)` 非白名单 → 返回 `{kind:'ask', reason, displayReason:{en,zh}}`。
@@ -120,11 +142,11 @@ activity/window/display/battery/cpuinfo/meminfo/gfxinfo/input/power/wifi。
 
 | 方法/路径 | 行为 |
 |---|---|
-| GET `/status` | `service.status()`；no-store |
-| GET `/config` | `{runtime, attach:{endpoint,userHint,resolved}, stream:{maxSize,maxFps,bitrate}, revision}`；revision 来自 settings.describe（缺失 settings → 503 E_NO_WEB） |
-| POST `/config` | body `{path:string[], value, revision?}`；只允许三键；R5 检查；写后回读 + 复验；成功返回同上 snapshot |
+| GET `/status` | onboarding pending/declined → 200 `{ok:false,error:{code:'E_ONBOARDING_*',...}}`（不碰设备）；accepted → `service.status()`；no-store |
+| GET `/config` | `{runtime, onboarding:{status,choice}, attach:{endpoint,userHint,resolved}, stream:{maxSize,maxFps,bitrate}, revision}`；revision 来自 settings.describe（缺失 settings → 503 E_NO_WEB） |
+| POST `/config` | body `{path:string[], value, revision?}`；只允许五键（attach 三键 + onboarding 两键）；R5 检查；写后回读 + 复验；成功返回同上 snapshot |
 | POST `/attach/verify` | body `{endpoint}`；adb connect(timeout 3000) + `getprop ro.product.model`；成功 200 `{ok:true,latencyMs,banner}`，失败 200 `{ok:false,latencyMs,error}`；不落盘 |
-| GET `/screenshot` | `image/png` + no-store；booting → 200 JSON `E_BOOTING`（error.bootMs） |
+| GET `/screenshot` | `image/png` + no-store；onboarding pending/declined → 200 JSON `E_ONBOARDING_*`；booting → 200 JSON `E_BOOTING`（error.bootMs） |
 
 - `enabled=false` 时**只**注册 GET /config（设置页只读）；其余路径 403 `E_NO_WEB`，不注册工具与流。
 - 无 `ctx.connection` → 503 `E_NO_WEB`；`requestRejection` 401 → `E_AUTH`，其它 → `E_ORIGIN`。
@@ -139,7 +161,7 @@ activity/window/display/battery/cpuinfo/meminfo/gfxinfo/input/power/wifi。
 - 文件：`$DSH_HOME/storages/dsh-phone/agent.json`（权限 0600；`DSH_HOME` 空则 `~/.dsh`），内容
   `{"token":"<64 hex>","baseUrl":"http://127.0.0.1:<port>"}`；`baseUrl` 取自 `ctx.webServer.getOrigin()`。
 - 路由：`POST /dsh-phone/api/agent/config`，body 与 `POST /config` 相同（`{path,value,revision?}`，
-  仍只允许 `attach.endpoint｜resolved｜userHint` 三键）。
+  允许 `attach.endpoint｜resolved｜userHint` 与 `onboarding.status｜choice`；userHint 仅浏览器可写）。
 - 鉴权：**同时满足** ① `req.socket.remoteAddress` 为 loopback（127/8、::1、::ffff:127/8）；
   ② 无 `Origin` 头；③ `x-dsh-phone-token` 与文件 token 常量时间相等。任一不满足则回退
   `ctx.connection.requestRejection` 的原有校验；token 错误且无同源 cookie → 401 `E_AUTH`。
@@ -181,6 +203,8 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 | revision 冲突（重试一次后） | 409 | `E_CONFIG_CONFLICT` | true |
 | 写 endpoint/resolved 前未 verify | 409 | `E_NOT_VERIFIED` | false |
 | Agent 通道试图写 userHint（R2） | 403 | `E_FORBIDDEN` | false |
+| onboarding pending（GET /status、/screenshot、工具） | 200 | `E_ONBOARDING_REQUIRED`（error.onboarding 含提问/选项/安装指引） | false |
+| onboarding declined（同上） | 200 | `E_ONBOARDING_DECLINED` | false |
 | 写后 phone_status 复验失败 | 502 | `E_DEVICE_DISCONNECTED` | true |
 | 回读校验失败 / 设备命令失败 | 500 | `E_DEVICE_COMMAND` | true |
 | 实例启动中（screenshot 路由） | 200 | `E_BOOTING`（带 bootMs） | true |
@@ -230,13 +254,17 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
    形态（IPv4-mapped 等），也未验证卸载后 token 文件确实被删除。
 9. **`x-dsh-phone-token` 与同源 cookie 并存**：token 缺失但同源 cookie 有效时走普通 requestRejection
    分支放行（与浏览器 `POST /config` 等价），该分支只做了单测。
+10. **onboarding 的真实交互闭环**：工具/HTTP 的 pending/declined/accepted 分支与配置写入均有单测，
+    但未在真实设备上验证「Agent 询问 → 用户答复 → 写 accepted → 首次启动成功」的全流程；
+    设置页引导卡片属 #31（client），其真实 UI 也未验证。
 
 ## 8. 自检
 
 ```sh
-cd /home/thatgfsj/AIagent/.phone-wt/host
-npm run check     # tsc --noEmit + node --test（155 tests，含 runtime/stream）+ 行数 72 文件
-npm run build     # host=46 files，产物 lib/ 不提交
+cd /home/thatgfsj/AIagent/.phone-wt/onboard-host
+npm run check     # tsc --noEmit + node --test（235 tests，含 runtime/stream）+ 行数 106 文件
+npm run build     # host=48 files，产物 lib/ 不提交
+npm run verify    # 验收矩阵（安装/WS/鉴权/行数/e2e；详见 docs/verification.md）
 ```
 
 Host 单测（`tests/host/`，不依赖真机）：
@@ -251,3 +279,5 @@ Host 单测（`tests/host/`，不依赖真机）：
 | `service.test.ts` | 单飞、booting 中间态、screenshot 串行、control-only INJECT_TEXT、引用计数+5s 宽限、verify、status、事件、dispose |
 | `agent-token.test.ts` | token 路径/生成/0600 落盘、loopback+Origin+常量时间校验、dispose 删除 |
 | `shell-policy.test.ts` | 注册级：tools/pre-execute 捕获并断言白名单 next / 非白名单 ask |
+| `onboarding.test.ts` | pending/declined/accepted 守卫、step/options/install/docs 结构、effectiveRuntime、旧配置 normalize |
+| `wiring.test.ts` | `readOnboarding` 与 `readServiceConfig`：accepted+choice 等价显式 runtime、pending 仍 auto |

@@ -42,3 +42,8 @@ test('readOnboarding / readServiceConfig：accepted+choice 等价显式 runtime'
   const pending = fakeConfig({ status: 'pending', choice: 'redroid' })
   assert.equal(readServiceConfig(pending).runtime, 'auto')
 })
+test('readOnboarding：缺 onboarding 段（旧配置/旧 verify 假 config）→ pending', () => {
+  const config = fakeConfig({}) as unknown as Record<string, unknown>
+  delete config.onboarding
+  assert.deepEqual(readOnboarding(config as unknown as PhoneConfig), { status: 'pending', choice: '' })
+})
