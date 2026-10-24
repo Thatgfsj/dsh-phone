@@ -59,8 +59,24 @@
     "lines": "node scripts/check-file-lines.mjs",
     "prepack": "node scripts/build.mjs"
   },
+  "dependencies": {
+    "@yume-chan/adb": "^2.6.4",
+    "@yume-chan/adb-scrcpy": "^2.3.2",
+    "@yume-chan/scrcpy": "^2.3.0",
+    "@yume-chan/scrcpy-decoder-tinyh264": "^2.1.0",
+    "@yume-chan/stream-extra": "^2.6.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.2 <0.3.0",
+    "@deepseek-ai/schemastery": "~3.18.5"
+  },
   "devDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "~3.18.5",
     "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.7.0"
   }
