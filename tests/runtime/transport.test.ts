@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
-import type { Server } from 'node:net'
+import type { Server, Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
@@ -131,7 +131,10 @@ describe('adb transport：失败路径', () => {
   })
 
   test('对端接受 TCP 但不说话 → 握手超时', async () => {
-    const silent: Server = createServer(() => undefined)
+    const accepted: Socket[] = []
+    const silent: Server = createServer((socket) => {
+      accepted.push(socket)
+    })
     await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', () => resolve()))
     const address = silent.address()
     assert.ok(address && typeof address === 'object')
@@ -142,6 +145,7 @@ describe('adb transport：失败路径', () => {
         AdbTimeoutError,
       )
     } finally {
+      for (const socket of accepted) socket.destroy()
       await new Promise<void>((resolve) => silent.close(() => resolve()))
       await rm(dir, { recursive: true, force: true })
     }

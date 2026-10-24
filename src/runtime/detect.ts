@@ -176,9 +176,23 @@ export async function detectRuntime(
   })
 
   // 4. 全失败：给平台指引，禁止静默失败
-  const guide = installGuide(platform)
   steps.push({ step: 'fail', ok: false, detail: '三条路径均不可用' })
-  throw new RuntimeUnavailableError({ platform, steps, guide })
+  const hints = [
+    ...steps.map((step) => `- ${step.step}: ${step.detail}`),
+    '',
+    ...installGuide(platform).split('\n'),
+  ]
+  throw new RuntimeUnavailableError(preferredRuntime(platform), hints, undefined, {
+    platform,
+    steps,
+  })
+}
+
+/** 平台的首选运行时（SPEC §3.1 表格）：仅用于全失败时的错误语义。 */
+export function preferredRuntime(platform: Platform): RuntimeKind {
+  if (platform === 'linux') return 'redroid'
+  if (platform === 'windows' || platform === 'macos') return 'emulator'
+  return 'attach'
 }
 
 /** 探测 + 创建适配器的一步式入口（宿主层用）。 */

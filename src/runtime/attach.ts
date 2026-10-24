@@ -51,7 +51,7 @@ export class AttachRuntime implements RuntimeAdapter {
       if (this.#attach.userHint.trim()) {
         return {
           ok: false,
-          reason: 'attach.endpoint 未解析（userHint 待宿主接入流程解析）',
+          reason: 'attach.endpoint 未解析（userHint 待解析：需宿主接入流程验证连通后写入）',
         }
       }
       return { ok: false, reason: '未配置 attach.endpoint' }

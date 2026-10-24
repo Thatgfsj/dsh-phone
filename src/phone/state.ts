@@ -1,5 +1,5 @@
 /**
- * 生命周期状态机（SPEC §3.4 / §3.5，INTERFACES §3）。
+ * 生命周期状态机（SPEC §3.4 / §3.5，INTERFACES §3，architecture §6）。
  *
  * ```
  * stopped ──(首次工具调用/打开面板)──▶ running ──(idle 5min)──▶ paused
@@ -11,10 +11,15 @@
  * - **懒启动**：构造时不动任何外部资源，只有 `ensureRunning()` 才拉起；
  * - **single-flight**：并发 `ensureRunning()` 合并为一次 start/resume；
  * - **booting 中间态**：启动期间的调用共享同一个 promise（工具层可等待后重试）；
- * - **可注入时钟**：单测用假时钟验证 5min/30min 超时，不真的等。
+ * - 计时逻辑在 `idle.ts`，时钟注入以便单测不真的等 5min/30min。
  */
 
+import { IdleTimer, systemClock } from './idle.ts'
+import type { Clock } from './idle.ts'
 import type { PhoneState } from '../runtime/types.ts'
+
+export type { Clock } from './idle.ts'
+export { systemClock } from './idle.ts'
 
 export type LifecyclePhase = 'start' | 'resume' | 'pause' | 'stop'
 
@@ -46,24 +51,6 @@ export interface LifecycleHooks {
   onError?(error: Error, phase: LifecyclePhase): void
 }
 
-export interface Clock {
-  now(): number
-  setTimeout(callback: () => void, delayMs: number): unknown
-  clearTimeout(handle: unknown): void
-}
-
-export const systemClock: Clock = {
-  now: () => Date.now(),
-  setTimeout: (callback, delayMs) => {
-    const handle = setTimeout(callback, delayMs)
-    handle.unref?.()
-    return handle
-  },
-  clearTimeout: (handle) => {
-    clearTimeout(handle as ReturnType<typeof setTimeout>)
-  },
-}
-
 export interface LifecycleStatus {
   state: PhoneState
   /** 进入当前状态的时间戳（ms）。 */
@@ -86,6 +73,7 @@ export class PhoneLifecycle {
   readonly #hooks: LifecycleHooks
   readonly #timings: LifecycleTimings
   readonly #clock: Clock
+  readonly #idle: IdleTimer
   readonly #listeners = new Set<(status: LifecycleStatus) => void>()
   #state: PhoneState = 'stopped'
   #since: number
@@ -94,8 +82,6 @@ export class PhoneLifecycle {
   #bootMs: number | undefined
   #inflight: Promise<void> | undefined
   #pausing: Promise<void> | undefined
-  #idleTimer: unknown
-  #pausedTimer: unknown
   #disposed = false
 
   constructor(
@@ -107,6 +93,17 @@ export class PhoneLifecycle {
     this.#timings = timings
     this.#clock = clock
     this.#since = clock.now()
+    this.#idle = new IdleTimer({
+      idleTimeoutMs: timings.idleTimeoutMs,
+      pausedTimeoutMs: timings.pausedTimeoutMs,
+      clock,
+      onIdle: () => {
+        void this.#enterPaused()
+      },
+      onExpire: () => {
+        void this.#enterStopped()
+      },
+    })
   }
 
   get state(): PhoneState {
@@ -138,13 +135,13 @@ export class PhoneLifecycle {
   async ensureRunning(): Promise<void> {
     if (this.#disposed) throw new Error('PhoneLifecycle 已释放')
 
-    // 正在休眠（idle → pause）时，等它落定再决定去向，避免 paused/running 竞态
+    // 正在休眠（idle → pause）时先等它落定，避免 paused/running 竞态
     if (this.#pausing) {
       await this.#pausing.catch(() => undefined)
     }
 
     if (this.#state === 'running') {
-      this.#armIdleTimer()
+      this.#idle.armIdle()
       return
     }
     if (this.#inflight) {
@@ -167,11 +164,11 @@ export class PhoneLifecycle {
   touch(options: TouchOptions = {}): void {
     if (this.#disposed) return
     if (this.#state === 'running') {
-      this.#armIdleTimer()
+      this.#idle.armIdle()
       return
     }
     if (this.#state === 'paused') {
-      this.#clearPausedTimer()
+      this.#idle.clearPaused()
       if (options.wake !== false && !this.#inflight) {
         void this.ensureRunning().catch(() => undefined)
       }
@@ -181,7 +178,7 @@ export class PhoneLifecycle {
   /** ADB 断连上报：连接已不可用，状态回到 stopped，等下次 ensureRunning 重连。 */
   notifyDisconnected(reason?: string): void {
     if (this.#disposed || this.#state === 'stopped') return
-    this.#clearTimers()
+    this.#idle.clear()
     this.#lastError = reason ?? 'ADB 连接已断开'
     this.#bootStartedAt = undefined
     this.#transition('stopped')
@@ -190,7 +187,7 @@ export class PhoneLifecycle {
   /** 释放定时器与订阅（插件卸载时调用）。 */
   async dispose(): Promise<void> {
     this.#disposed = true
-    this.#clearTimers()
+    this.#idle.dispose()
     this.#listeners.clear()
     if (this.#inflight) {
       await this.#inflight.catch(() => undefined)
@@ -201,7 +198,7 @@ export class PhoneLifecycle {
     const phase: LifecyclePhase = resuming ? 'resume' : 'start'
     const previous: PhoneState = resuming ? 'paused' : 'stopped'
     this.#lastError = undefined
-    this.#clearTimers()
+    this.#idle.clear()
     this.#bootStartedAt = this.#clock.now()
     this.#transition('booting')
 
@@ -213,7 +210,7 @@ export class PhoneLifecycle {
       this.#bootMs = this.#clock.now() - (this.#bootStartedAt ?? this.#clock.now())
       this.#bootStartedAt = undefined
       this.#transition('running')
-      this.#armIdleTimer()
+      this.#idle.armIdle()
     } catch (error) {
       this.#bootStartedAt = undefined
       const failure = toError(error)
@@ -250,36 +247,6 @@ export class PhoneLifecycle {
     })
   }
 
-  #armIdleTimer(): void {
-    this.#clearIdleTimer()
-    if (this.#state !== 'running') return
-    const idleTimeoutMs = this.#timings.idleTimeoutMs
-    if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) return
-    this.#idleTimer = this.#clock.setTimeout(() => {
-      this.#idleTimer = undefined
-      void this.#enterPaused()
-    }, idleTimeoutMs)
-  }
-
-  #clearIdleTimer(): void {
-    if (this.#idleTimer !== undefined) {
-      this.#clock.clearTimeout(this.#idleTimer)
-      this.#idleTimer = undefined
-    }
-  }
-
-  #clearPausedTimer(): void {
-    if (this.#pausedTimer !== undefined) {
-      this.#clock.clearTimeout(this.#pausedTimer)
-      this.#pausedTimer = undefined
-    }
-  }
-
-  #clearTimers(): void {
-    this.#clearIdleTimer()
-    this.#clearPausedTimer()
-  }
-
   async #enterPaused(): Promise<void> {
     if (this.#state !== 'running') return
     this.#pausing = (async () => {
@@ -290,29 +257,18 @@ export class PhoneLifecycle {
         this.#lastError = failure.message
         this.#hooks.onError?.(failure, 'pause')
         // 暂停失败就继续跑，稍后重试 idle 计时，不要把状态机卡住
-        this.#armIdleTimer()
+        this.#idle.armIdle()
         return
       }
       if (this.#state !== 'running') return
       this.#transition('paused')
-      this.#armPausedTimer()
+      this.#idle.armPaused()
     })()
     try {
       await this.#pausing
     } finally {
       this.#pausing = undefined
     }
-  }
-
-  #armPausedTimer(): void {
-    this.#clearPausedTimer()
-    if (this.#state !== 'paused') return
-    const pausedTimeoutMs = this.#timings.pausedTimeoutMs
-    if (!Number.isFinite(pausedTimeoutMs) || pausedTimeoutMs <= 0) return
-    this.#pausedTimer = this.#clock.setTimeout(() => {
-      this.#pausedTimer = undefined
-      void this.#enterStopped()
-    }, pausedTimeoutMs)
   }
 
   async #enterStopped(): Promise<void> {

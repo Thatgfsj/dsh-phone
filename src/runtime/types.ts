@@ -201,26 +201,35 @@ export class RuntimeError extends Error {
   }
 }
 
-/** 决策树全失败：带平台安装指引（SPEC §3.1 第 4 步，禁止静默失败）。 */
+/**
+ * 决策树全失败：带平台安装指引（SPEC §3.1 第 4 步，禁止静默失败）。
+ *
+ * 签名对齐 architecture.md §3.1：`(kind, hints, cause?)`；`platform/steps` 是
+ * 额外诊断信息（可选第 4 参），不改变宿主对 `kind/hints` 的用法。
+ */
 export class RuntimeUnavailableError extends RuntimeError {
-  readonly platform: Platform
+  /** 该平台的首选运行时（决策树全失败时用来表达“首选也不可用”）。 */
+  readonly kind: RuntimeKind
+  /** 给工具/HTTP 直接展示的安装指引行。 */
+  readonly hints: string[]
+  readonly platform?: Platform
   readonly steps: DetectionStep[]
-  readonly guide: string
 
-  constructor(init: {
-    platform: Platform
-    steps: DetectionStep[]
-    guide: string
-    message?: string
-  }) {
+  constructor(
+    kind: RuntimeKind,
+    hints: string[],
+    cause?: unknown,
+    extra?: { platform?: Platform; steps?: DetectionStep[] },
+  ) {
     super(
-      init.message ??
-        `没有可用的 Android 运行时（平台: ${init.platform}）\n${init.guide}`,
+      `没有可用的 Android 运行时（首选 ${kind} 不可用）\n${hints.join('\n')}`,
       'unavailable',
+      { cause },
     )
     this.name = 'RuntimeUnavailableError'
-    this.platform = init.platform
-    this.steps = init.steps
-    this.guide = init.guide
+    this.kind = kind
+    this.hints = hints
+    this.platform = extra?.platform
+    this.steps = extra?.steps ?? []
   }
 }

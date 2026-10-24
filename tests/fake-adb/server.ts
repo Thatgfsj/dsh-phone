@@ -32,7 +32,7 @@ const AUTH_SIGNATURE = 2
 const AUTH_PUBLIC_KEY = 3
 const VERSION = 0x01000001
 const SERVER_MAX_PAYLOAD = 256 * 1024
-const SYNC_OKAY = Buffer.from([0x59, 0x41, 0x4b, 0x4f]) // 'OKAY' 小端序字节
+const SYNC_OKAY = Buffer.from('OKAY', 'ascii')
 const SYNC_ID = {
   Send: encodeId('SEND'),
   Data: encodeId('DATA'),
@@ -116,7 +116,7 @@ export class FakeAdbdServer {
   readonly requests: string[] = []
   readonly pushedFiles: FakePushedFile[] = []
   #authRequests = 0
-  #token = Buffer.from('0123456789abcdefghij', 'ascii')
+  #token = new TextEncoder().encode('0123456789abcdefghij')
 
   private constructor(server: Server, options: FakeAdbdOptions) {
     this.#server = server
@@ -154,7 +154,7 @@ export class FakeAdbdServer {
 
   #accept(socket: Socket): void {
     this.#sockets.add(socket)
-    let buffer = Buffer.alloc(0)
+    let buffer: Buffer = Buffer.alloc(0)
     let authenticated = this.#options.auth !== 'signature'
     const sockets = new Map<number, SocketState>()
 
@@ -228,7 +228,7 @@ export class FakeAdbdServer {
           }
           sync.path = undefined
           const response = Buffer.alloc(8)
-          response.writeUInt32LE(SYNC_OKAY.readUInt32LE(0), 0)
+          SYNC_OKAY.copy(response, 0)
           response.writeUInt32LE(0, 4)
           sendWrite(localId, state.remoteId, response)
         } else {
