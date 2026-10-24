@@ -154,6 +154,9 @@ export class StreamClient {
 
   #connect(): void {
     if (this.#socket !== undefined || this.#disposed || !this.#visible) return
+    // A new connection starts with no prior error frame: otherwise a stale
+    // message would be reused when the fresh socket later closes with 1008.
+    this.#lastError = undefined
     this.#setState('connecting')
     const url = this.#options.url ?? defaultStreamUrl()
     let socket: SocketLike
