@@ -49,7 +49,7 @@ node scripts/fetch-scrcpy-server.mjs       # -> assets/scrcpy-server.jar（校�
 dsh plugin --profile web add .             # 目录安装，link 到当前 checkout
 ```
 
-重启 DSH 后打开「设置 → 手机」。完整步骤（含临时 profile 验证、升级、卸载、离线安装）见 [docs/install.md](docs/install.md)。
+重启 DSH 并 **刷新浏览器页面（F5）** 后打开「设置 → 手机」。动态安装/更新/启用后为什么必须刷新（HMR 不会向已打开页面注入新的客户端模块）、以及刷新不中断会话的原因，见 [docs/install.md](docs/install.md) §1.1。完整步骤（含临时 profile 验证、升级、卸载、离线安装）见 [docs/install.md](docs/install.md)。
 
 ## 首次接入（一句话）
 
@@ -193,6 +193,7 @@ npm pack --dry-run
 ## 已知限制
 
 - **首版单实例**（`maxInstances: 1`）：工具无 serial 参数，不支持多设备。
+- **安装/更新/启用后需刷新页面**：DSH 不会把动态新增的客户端模块热注入已打开页面（HMR 只更新已加载模块）；工具可用但看不到手机入口时先刷新（F5），刷新不中断会话/手机实例。
 - **未在本机端到端验证**：本机无 Docker、无 emulator 包/AVD、attach 端口不可达。redroid、emulator、真机 attach、scrcpy 视频流、审批 UI、真实浏览器渲染均只有单测/静态验证；详见 [docs/runtime.md](docs/runtime.md) §6、[docs/stream.md](docs/stream.md) §8、[docs/client.md](docs/client.md) §6。
 - **`cpuPct/memPct` 未实现**：`phone_status` 中这两个字段当前始终缺省。
 - **`phone_screenshot` 的模型图片能力**：仅捕获 `attachments.saveImage` 失败并降级文本，未探测模型路由是否接受图片。

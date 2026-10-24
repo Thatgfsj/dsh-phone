@@ -18,6 +18,20 @@
 - **首次使用文档与 Agent 技能**（[#32](https://github.com/Thatgfsj/dsh-phone/issues/32)）：`docs/usage.md`
   增加「首次使用」章节（三种方式命令与 Agent 提问流程）、`docs/config.md` 增加 onboarding 字段与语义、
   `skill/dsh-phone/SKILL.md` 增加「收到 `E_ONBOARDING_REQUIRED` 先征求用户同意」的硬流程。
+- **会话头部手机入口与面板空态**（[#45](https://github.com/Thatgfsj/dsh-phone/issues/45)）：
+  `conversation.session.header.utilities` 增加手机图标按钮（任意会话可见，点击在右栏打开/聚焦手机 tab）；
+  `pending`/`declined`/Host 不可用时面板显示可读空态与内嵌引导卡，不黑屏；
+  `accepted` 时加载后 best-effort 自动打开（≤10s 静默重试）。
+- **pending 也自动打开面板**（[#47](https://github.com/Thatgfsj/dsh-phone/issues/47)）：自动打开条件改为
+  `onboarding.status !== 'declined'`；`pending` 时由面板内引导卡直接征询同意；`declined` 不自动打开
+  （会话头部按钮仍可手动打开）。
+
+### Changed
+
+- **动态安装后需刷新页面**（[#48](https://github.com/Thatgfsj/dsh-phone/issues/48)）：
+  `docs/install.md` / README / `docs/client.md` / `skill/dsh-phone/SKILL.md` 补充说明——客户端模块在页面启动时
+  入图，HMR 不会向已打开页面注入新模块；安装/更新/启用后需刷新页面（F5），刷新不中断会话与手机实例；
+  SKILL 增加「工具可用但看不到手机入口」的三步排查。
 
 ## [v0.1.0] - 2026-10-25
 

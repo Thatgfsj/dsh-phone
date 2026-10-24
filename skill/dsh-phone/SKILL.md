@@ -21,6 +21,7 @@ whenToUse: 用户要求在 Android 设备上操作应用、看手机画面、连
 - 插件开关是 `dsh-phone.enabled`（独立于 DSH 全局插件启停）。**变更权只属于用户**：禁止自行修改
   `enabled`、`runtime`、stream 参数，也禁止绕过 onboarding 守卫。
 - 插件关闭不影响已写入的 `attach.*` / `onboarding.*`；重新打开后按原状态继续。
+- **工具可用但 UI 不出现**（看不到手机面板/入口）：先让用户刷新页面（F5）；见 §10「UI 未出现」三步排查。不要重装、不要改配置。
 
 ## 2. 技术事实（操作依据）
 
@@ -206,6 +207,7 @@ limits: { maxInstances: 1 }
 | 现象 | 处置 |
 |---|---|
 | 工具列表无 `phone_*` | 插件未装或开关关闭：引导用户安装/启用；**不自行改 `enabled`** |
+| `phone_*` 工具可用但用户看不到手机面板/入口 | **先让用户刷新页面（F5）**；仍无则检查插件管理启用/重载；再收集浏览器 Console 与 `/plugins` bundle 证据；**不要当成插件未安装**（工具可用=Host 已加载成功） |
 | `E_ONBOARDING_REQUIRED` | 这是首次使用守卫，**不是故障**：按 §4 先向用户说明 2GB 内存等代价、给三种方式，用户明确答复后再写 `onboarding.choice/status` |
 | `E_ONBOARDING_DECLINED` | 用户已拒绝：停止操作并说明可在设置页重新启用；不要反复尝试 |
 | `E_BOOTING` / booting 超 60s | 正常等待后重试；超 60s 报告 runtime/平台，检查 Docker/binder、KVM、SDK/AVD |
@@ -216,6 +218,19 @@ limits: { maxInstances: 1 }
 | 画面卡顿/CPU 高 | 建议用户换 Chrome/Edge（硬解）、降低 `stream` 参数；不要加重负载 |
 | 截图只有文字没图片 | 当前模型/会话不支持图片附件，已降级文本；改用 `phone_uiautomator_dump` 拿坐标 |
 | 设置页保存失败 | 错误码：`E_NOT_VERIFIED` 先接入验证；`E_CONFIG_CONFLICT` 刷新重试；403 是 Agent 在写 userHint |
+
+### UI 未出现时的三步排查（#48）
+
+`phone_*` 工具可用但用户看不到手机面板/入口时，按顺序：
+
+1. **刷新页面（F5）**：DSH 只在页面启动时组合客户端模块；动态安装/更新/启用不会注入已打开页面。
+   刷新**不中断会话**与手机实例。刷新后看会话头部手机图标、设置→手机、右侧栏 tab 是否出现。
+2. **检查插件管理**：确认 `dsh-phone` 行已启用（不是 Loader `disabled`）；必要时重载插件/重启 DSH，
+   再刷新页面。
+3. **收集证据**（仍无时提供给维护者）：浏览器 DevTools Console（模块加载/slot 报错）、
+   Network 里 `/plugins/...` 客户端 bundle 的 HTTP 状态（200/404）、
+   `window.__DSH_BOOT__.entries` 是否含 `dsh-phone`；同时确认 `phone_status` 是否仍可用
+   （可用即 Host 正常，问题在客户端模块图）。不要删除重装、不要改配置试图"修好"。
 
 ## 11. 行为边界（红线）
 
@@ -256,3 +271,5 @@ cp -r /path/to/dsh-phone/skill/dsh-phone ~/.dsh/skills/dsh-phone
 4. **一句话的路径/端口探测由 Agent 的 shell 完成**，插件只提供 verify + 写入（不扫盘）。
 5. **`cpuPct/memPct` 未实现**：`phone_status` 不返回这两个字段，不要据此判断负载。
 6. **设置页没有 `enabled` 开关**：开关由插件管理/配置文件控制；不要引导用户去设置页找它。
+7. **动态安装后 UI 需刷新页面**：HMR 不会向已打开页面注入新的客户端模块（DSH 宿主行为，不是插件缺陷）；
+   工具可用但看不到入口时先刷新（F5），刷新不中断会话。

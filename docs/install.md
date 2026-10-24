@@ -35,12 +35,36 @@ node scripts/fetch-scrcpy-server.mjs   # 下载并校验 assets/scrcpy-server.ja
 dsh plugin --profile web add .         # 目录安装（link:/abs/path，不复制文件）
 ```
 
-然后**重启 DSH**（客户端 bundle 与 Host 模块都要求新的模块代）。打开「设置 → 手机」应能看到设置页。
+然后按顺序：
+
+1. **重启 DSH**（Host 行与 bundle 需要新的模块代）；
+2. **刷新浏览器页面（F5）**：客户端插件模块只在页面启动时进入 `window.__DSH_BOOT__` 启动图，
+   已打开的页面不会热注入新模块（HMR 只对已加载模块推重建帧）。刷新**不会中断会话**——
+   会话与手机实例都在 Host 侧，页面重连后继续。
+
+刷新后打开「设置 → 手机」或会话头部的手机图标；首次使用会看到 onboarding 引导卡片。
 
 - 安装时 `dsh plugin` 会把 dsh-phone 追加进该 profile 的 `dsh.profile.bundles`（因为包声明了 `dsh.bundle.patch`）。
 - `--profile` 必须写在转发给 pnpm 的参数**之前**（DSH 0.2.1 规则）。
-- 目录安装不需要每次重装：改完源码 `npm run build` 后重启 DSH 即可。
+- 目录安装不需要每次重装：改完源码 `npm run build` 后重启 DSH **并刷新页面**即可。
 - 不想动正在使用的 profile 时，见第 4 节。
+
+### 1.1 为什么安装/更新/启用后必须刷新页面
+
+DSH 的客户端模块（`lib/client.js`）在**页面启动时**被组合进 `window.__DSH_BOOT__` 的启动图；
+插件动态安装/更新/启用后，新的模块行不会自动进入**已经打开**的页面。DSH 的 HMR 只会对
+已加载模块推送重建帧，不能向运行中的页面新增模块——所以必须刷新页面（F5）让启动图重算。
+
+典型症状：`phone_*` 工具可用（Host 已加载），但右侧栏/会话头部/设置页没有手机入口——
+这不是插件未安装，而是当前页面还是旧的模块图。刷新页面的影响：
+
+- **不中断会话**：Session 记录在 Host 侧持久化，刷新只是重新连接；手机实例也不会重启
+  （懒启动/休眠状态机在 Host，实例状态保持不变）。
+- 面板/设置页会重新拉取配置；若正在看视频，面板会重新建立 WS 与解码会话（短暂黑屏后恢复）。
+- 首次使用（onboarding pending）时，刷新后会自动打开手机面板并显示确认卡片（见 [client.md](client.md) §1.3）。
+
+需要在以下时机刷新：首次安装、升级（`npm run build` 后重启 DSH 再刷新）、在插件管理中启用/重载插件、
+修改 `dsh.client` 或客户端 bundle、切换 profile 后重新打开页面。
 
 ## 2. 从 tarball 安装（发布后）
 
@@ -48,6 +72,8 @@ dsh plugin --profile web add .         # 目录安装（link:/abs/path，不复�
 npm pack                # -> dsh-phone-0.1.0.tgz（prepack 会执行 build）
 dsh plugin --profile web add ./dsh-phone-0.1.0.tgz
 ```
+
+安装后同样**重启 DSH 并刷新页面**（原因见 §1.1）。
 
 tarball 只含 `files` 白名单：`lib/`、`locale/`、`cordis.patch.yml`、`icon.svg`、`README.md`、`LICENSE`、`scripts/`。
 **不含** `assets/scrcpy-server*.jar`（需按第 7 节自行获取，或用 `DSH_PHONE_SCRCPY_SERVER` 指向）。
@@ -103,7 +129,7 @@ npm run build
 # 重启 DSH；无需重新 dsh plugin add
 ```
 
-- 客户端 bundle 与 Host 模块都需要**重启**才会换新；页面刷新不够。
+- Host 模块与客户端 bundle 都需要**重启 DSH** 才会换新；重启后还要**刷新已打开的页面**（客户端模块在页面启动时入图；只重启不刷新旧页面仍看不到新 UI）。
 - 升级后插件会重新生成 Agent token（旧 token 立即失效）；若改过 `docs/`/配置字段，重新看 [config.md](config.md)。
 - tarball 安装：`dsh plugin --profile web add ./dsh-phone-0.1.0.tgz` 覆盖安装即可。
 
@@ -116,6 +142,7 @@ rm -f /path/to/dsh-phone/assets/scrcpy-server.jar                # 可选
 ```
 
 - 配置数据（`attach.*`）保留在 profile 的 `cordis.patch.yml` 中；重新安装后可直接命中缓存（R3）。
+- **卸载后刷新页面**：Host 已移除，但旧页面仍持有旧客户端模块，刷新前右侧栏/设置页入口不会消失。
 - 删除 profile 目录前确认绝对路径；不要删正在使用的 `web` profile。
 
 ## 7. scrcpy-server jar（必需）
@@ -137,4 +164,4 @@ node scripts/fetch-scrcpy-server.mjs --mirror https://ghproxy.net/   # 追加镜
 
 ## 8. 安装失败排查
 
-见 [troubleshooting.md](troubleshooting.md) §1–§3：常见原因是没跑 `npm run build`（`lib/` 不存在）、`engines.dsh` 不匹配、插件开关关闭、或没有重启 DSH。
+见 [troubleshooting.md](troubleshooting.md) §1–§3：常见原因是没跑 `npm run build`（`lib/` 不存在）、`engines.dsh` 不匹配、插件开关关闭、或没有重启 DSH / 刷新页面。
