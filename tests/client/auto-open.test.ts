@@ -39,21 +39,34 @@ test('auto-open opens the tab once when onboarding is accepted', async () => {
   assert.equal(attempts, 1)
 })
 
-test('auto-open skips pending and declined onboarding without touching the sidebar', async () => {
-  for (const status of ['pending', 'declined']) {
-    const c = clock()
-    let attempts = 0
-    const result = await maybeAutoOpenPhone({
-      getConfig: async () => config({ status }),
-      openTab: () => {
-        attempts += 1
-      },
-      now: c.now,
-      sleep: c.sleep,
-    })
-    assert.equal(result, 'skipped')
-    assert.equal(attempts, 0)
-  }
+test('auto-open opens on pending so the panel can ask for consent (#47)', async () => {
+  const c = clock()
+  let attempts = 0
+  const result = await maybeAutoOpenPhone({
+    getConfig: async () => config({ status: 'pending' }),
+    openTab: () => {
+      attempts += 1
+    },
+    now: c.now,
+    sleep: c.sleep,
+  })
+  assert.equal(result, 'opened')
+  assert.equal(attempts, 1)
+})
+
+test('auto-open skips only declined onboarding', async () => {
+  const c = clock()
+  let attempts = 0
+  const result = await maybeAutoOpenPhone({
+    getConfig: async () => config({ status: 'declined' }),
+    openTab: () => {
+      attempts += 1
+    },
+    now: c.now,
+    sleep: c.sleep,
+  })
+  assert.equal(result, 'skipped')
+  assert.equal(attempts, 0)
 })
 
 test('auto-open treats a Host without the onboarding field as accepted', async () => {
