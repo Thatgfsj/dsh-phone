@@ -3,6 +3,7 @@
 > 需求原文见 [SPEC.md](./SPEC.md) §3.1–§3.5；冻结接口以 [architecture.md](./architecture.md) §3
 > 与 [calibration.md](./calibration.md) 的源码校准为准（早期协作简报不在仓库内）。
 > 本文记录**实现方式、取舍、与文档的偏差、以及本机未验证项**。
+> issue #38 起，安装指引的「可复制命令」统一由 `src/runtime/install-guide.ts` 提供（见 §3.5）。
 
 ## 1. 范围与文件
 
@@ -17,7 +18,8 @@
 | `src/runtime/types.ts` | `RuntimeAdapter` 等冻结类型 + 配置子结构 + `CommandRunner`/`RuntimeEnvironment` 注入点 |
 | `src/runtime/command.ts` | `child_process` 命令执行器（docker / emulator） |
 | `src/runtime/probe.ts` | 平台、`docker`、`/dev/binder`、`/dev/kvm`、emulator 候选路径、端口连通性探测 |
-| `src/runtime/detect.ts` | SPEC §3.1 决策树 + 平台安装指引 + 适配器工厂 |
+| `src/runtime/detect.ts` | SPEC §3.1 决策树 + 适配器工厂（安装指引委托 install-guide.ts） |
+| `src/runtime/install-guide.ts` | **安装命令单一数据源**（#38）：平台命令构建器 + 文本/hints 渲染 + onboarding 载荷 |
 | `src/runtime/attach.ts` / `emulator.ts` / `redroid.ts` | 三适配器 |
 | `src/phone/idle.ts` | idle(5min) / paused(30min) 计时器（可注入时钟） |
 | `src/phone/state.ts` | `PhoneLifecycle` 状态机：懒启动、single-flight、booting 等待、唤醒、断连 |
@@ -49,7 +51,8 @@
 2. emulator 可执行文件存在 **且** 硬件虚拟化可用（Linux `/dev/kvm`；macOS Hypervisor.framework；
    Windows 用 `emulator -accel-check` 判断 WHPX）→ **emulator**
 3. `attach.endpoint` 已填 **或** `userHint` 非空（待宿主接入流程解析）→ **attach**
-4. 全失败 → 抛 `RuntimeUnavailableError(kind, hints[])`，`hints` 含各步原因 + 平台安装指引
+4. 全失败 → 抛 `RuntimeUnavailableError(kind, hints[])`；`hints` = 各步原因 + **可复制命令清单**
+   （来自 §3.5 的单一数据源），`phone_status` / 9 个工具 / `GET /status` 都直接展示
 
 `runtime: redroid|emulator|attach` 显式配置时跳过决策树（不跳步的例外，见 SPEC §3.1）。
 
@@ -62,6 +65,44 @@
 | attach | **只做端口连通校验，不启动任何外部进程** | no-op（不是插件资源） | 重新校验端口 | no-op（只由 service 断开连接，实例不动） |
 
 端口/容器名等默认值：`DEFAULT_RUBUNTIME_OPTIONS`（`src/runtime/types.ts`）。
+
+### 3.5 安装命令单一数据源（issue #38）
+
+真实使用反馈：只给官网链接不够，用户需要「装什么、跑什么命令」。现在
+`src/runtime/install-guide.ts` 是唯一事实来源，三处消费同一份数据，避免文案漂移：
+
+| 消费方 | 入口 |
+|---|---|
+| detect → `RuntimeUnavailableError.hints` | `installGuideHints(platform)`：每行一条可复制命令；`phone_status`、9 个工具、`GET /status` 直接展示 |
+| host onboarding `onboarding.install` | `createOnboardingInstallPayload()`（形状不变：`emulator{commands,size}` / `redroid{commands}` / `attach{hint}`） |
+| 客户端引导卡片 | `ONBOARDING_INSTALL_COMMANDS` |
+
+命令覆盖（Linux 示例；windows/macos 的路径与端口探测命令不同）：
+
+    # emulator
+    sdkmanager "emulator" "system-images;android-34;google_apis;x86_64"
+    avdmanager create avd -n dsh-phone-avd -k "system-images;android-34;google_apis;x86_64"
+    emulator -avd dsh-phone-avd -no-window
+    # 附 /dev/kvm（Linux）/ WHPX（Windows）/ Hypervisor.framework（macOS）提示与 sdkmanager 绝对路径
+
+    # redroid（Linux）
+    sudo modprobe binder_linux devices="binder,hwbinder,vndbinder"
+    ls -l /dev/binder
+    docker info | head -5
+    docker run -d --name dsh-phone-redroid --restart=no --privileged --memory 2g --cpus 2 -v /lib/modules:/lib/modules:ro -p 127.0.0.1:5555:5555 redroid/redroid:14-latest
+    # 镜像/内存/vCPU/端口从 DEFAULT_RUNTIME_OPTIONS 派生，与 RedroidRuntime 实际参数一致
+
+    # attach：端口探测（按平台）
+    ss -ltn | grep -E ':(5555|62001|16384|16416|21503)$'   # Linux；Windows 用 Test-NetConnection，macOS 用 lsof
+    nc -z 127.0.0.1 5555 && echo open
+    # 再在「设置 → 手机 → attach.endpoint」填 127.0.0.1:<port>
+
+    # scrcpy-server（视频流；#37 合并后会按需自动下载，可选手工）
+    node scripts/fetch-scrcpy-server.mjs
+
+约束：插件**只展示命令、绝不执行**（SPEC §6.4）；命令不带 `$` 提示符，便于整行复制；
+非 Linux 平台不展示 `docker run`（redroid 仅给 WSL2 进阶说明，避免误导）。
+
 
 ## 4. 生命周期状态机
 
@@ -83,13 +124,18 @@
 
 ```sh
 npx tsc --noEmit                 # 通过
-node --test                      # 56 例全绿（transport 9 / device 9 / detect 10 / adapters 15 / state 13）
+node --test                      # 262 通过 + 5 跳过（共 267）：transport/device/detect/adapters/state
+                                 # + install-guide 20 例（命令快照 + 各平台 hints + 防漂移）
+                                 # + 既有 host/stream/client 用例
 node scripts/check-file-lines.mjs
 ```
 
 测试不依赖真机：`tests/fake-adb/server.ts` 在 localhost 实现 adbd 协议子集
 （CNXN、AUTH token/signature、OPEN、WRTE、CLSE、sync v1 SEND），端到端验证 `transport.ts`；
 device/detect/adapters/state 用注入的假对象，不发任何真实命令。
+`tests/runtime/install-guide.test.ts` 用**命令快照**锁文案：每个平台的 hints 必须包含
+sdkmanager / avdmanager / docker run / attach 端口探测 / scrcpy 下载命令，且 onboarding 载荷与
+客户端卡片命令必须能在安装指引文本中找到（零漂移守卫）。
 
 ## 6. 本机未验证项（重要）
 
@@ -101,6 +147,7 @@ device/detect/adapters/state 用注入的假对象，不发任何真实命令。
 | attach（真实实例） | 本机 waydroid adb 端口不可达 | 仅假环境单测；真实 adbd 的 AUTH 授权流程未端到端验证 |
 | Windows WHPX 检测 | 未在 Windows 验证 | `emulator -accel-check` 输出匹配是启发式 |
 | 真实 Android 设备的 `screencap`/`uiautomator` | 未实测 | 命令与临时文件清理逻辑按 toybox 行为编写，假连接覆盖了流程 |
+| 安装指引中的 sdkmanager/avdmanager/emulator/docker run 命令文本 | 未在本机逐条执行 | 按官方用法与适配器参数生成；本机无 emulator/Docker。命令快照测试只保证文案不漂移，不代表已跑通 |
 
 ## 7. 设计取舍 / 与文档的偏差
 
@@ -117,6 +164,11 @@ device/detect/adapters/state 用注入的假对象，不发任何真实命令。
    代价是设备端多一次 base64 编码（720p PNG 约 0.3–1ms 量级）。
 6. **`AdbConnection` 额外暴露 `disconnected`/`serial`**：INTERFACES 只要求 `raw`，这两个是 service 层
    检测断连与日志所需的最小增量（不破坏原语义）。
+7. **安装命令单一数据源（#38）**：命令构建器放在 `src/runtime/install-guide.ts`（纯数据、无 Node 依赖），
+   detect hints / host onboarding 载荷 / client 卡片共用；onboarding 载荷形状保持向后兼容
+   （`emulator.size` 仍是 `~1.7GB`）。
+8. **非 Linux 的 redroid**：只给「WSL2 进阶、默认不推荐」说明，不给 `docker run`，避免用户误以为
+   Windows/macOS 可以直接跑 redroid。
 
 ## 8. 给 Host 层的最小接入示例
 
@@ -134,3 +186,5 @@ const lifecycle = new PhoneLifecycle({ start, pause, resume, stop })
 - 老设备（无 `cmd` 特性）的 shell 回退路径（pty）。
 - emulator 快照实测与“资源紧张”主动降级（SPEC §3.4 括号里的可选策略）。
 - scrcpy-server 的 push（`AdbConnection.push` 已就绪，见 task-5）。
+- #37 合并后可从安装指引里删掉「手工下载 scrcpy-server」一节（改为纯自动），
+  同步修改本文件与 `install-guide.ts` 的 SCRCPY_SECTION。

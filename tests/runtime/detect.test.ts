@@ -103,6 +103,17 @@ describe('detect：SPEC §3.1 决策树', () => {
       assert.match(text, /docker/i)
       assert.match(text, /\/dev\/binder/)
       assert.match(text, /attach\.endpoint/)
+      // issue #38：指引必须是可复制命令，而不是只有官网链接
+      assert.match(text, /sdkmanager "emulator" "system-images;android-34;google_apis;x86_64"/)
+      assert.match(text, /avdmanager create avd -n dsh-phone-avd/)
+      assert.match(text, /emulator -avd dsh-phone-avd -no-window/)
+      assert.match(text, /sudo modprobe binder_linux devices="binder,hwbinder,vndbinder"/)
+      assert.match(text, /docker run -d --name dsh-phone-redroid/)
+      assert.match(text, /ls -l \/dev\/binder/)
+      assert.match(text, /node scripts\/fetch-scrcpy-server\.mjs/)
+      // message 是 GET /status + 工具层 E_RUNTIME_UNAVAILABLE 的 message 来源，必须含命令
+      assert.match(error.message, /sdkmanager "emulator"/)
+      assert.match(error.message, /docker run -d --name dsh-phone-redroid/)
       return true
     })
   })
@@ -117,6 +128,9 @@ describe('detect：SPEC §3.1 决策树', () => {
       assert.match(text, /WHPX/)
       assert.match(text, /Android Studio/)
       assert.match(text, /attach\.endpoint/)
+      assert.match(text, /sdkmanager "emulator"/)
+      assert.match(text, /Test-NetConnection 127\.0\.0\.1 -Port 5555/)
+      assert.match(text, /sdkmanager\.bat/)
       return true
     })
   })
@@ -127,7 +141,10 @@ describe('detect：SPEC §3.1 决策树', () => {
     await assert.rejects(detectRuntime(options(), env), (error: unknown) => {
       assert.ok(error instanceof RuntimeUnavailableError)
       assert.equal(error.kind, 'emulator')
-      assert.match(error.hints.join('\n'), /Hypervisor\.framework/)
+      const text = error.hints.join('\n')
+      assert.match(text, /Hypervisor\.framework/)
+      assert.match(text, /sdkmanager "emulator"/)
+      assert.match(text, /lsof -nP -iTCP:5555 -sTCP:LISTEN/)
       return true
     })
   })
