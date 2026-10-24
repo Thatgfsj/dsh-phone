@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { test } from 'node:test'
 
 import { createApiHandler, isValidEndpointString } from '../../src/http/routes.ts'
+import { RuntimeUnavailableError } from '../../src/runtime/types.ts'
 import type { ConfigView, HttpRouteDeps } from '../../src/http/routes.ts'
 import type { PhoneStatus } from '../../src/phone/contracts.ts'
 import { makeService } from './fakes.ts'
@@ -403,6 +404,34 @@ test('GET /screenshot：image/png；booting → 200 JSON E_BOOTING', async () =>
   assert.equal(response.statusCode, 200)
   assert.equal(json(response).error.code, 'E_BOOTING')
   assert.equal(json(response).error.bootMs, 2000)
+})
+
+test('GET /status：运行时决策树全失败 → 503 E_RUNTIME_UNAVAILABLE（issue #28）', async () => {
+  const service = makeService({
+    status: async () => {
+      throw new RuntimeUnavailableError('attach', [
+        'Linux 推荐路径：安装 Docker 并加载 binder 模块',
+        '或安装 Android SDK Emulator（需 /dev/kvm）',
+      ])
+    },
+  })
+  const harness = makeHarness({ service })
+  const response = await invoke(harness, { method: 'GET', url: '/dsh-phone/api/status' })
+  assert.equal(response.statusCode, 503)
+  const body = json(response)
+  assert.equal(body.ok, false)
+  assert.equal(body.error.code, 'E_RUNTIME_UNAVAILABLE')
+  assert.equal(body.error.retryable, false)
+  // message 必须保留完整安装指引，而不是被兜底成 E_DEVICE_COMMAND
+  assert.match(body.error.message, /没有可用的 Android 运行时/)
+  assert.match(body.error.message, /Docker/)
+  assert.match(body.error.message, /Android SDK Emulator/)
+  assert.equal(response.headers['cache-control'], 'no-store')
+
+  // 同一错误不得影响 GET /config（只读配置仍可用）
+  const config = await invoke(harness, { method: 'GET', url: '/dsh-phone/api/config' })
+  assert.equal(config.statusCode, 200)
+  assert.equal(json(config).ok, true)
 })
 
 test('未知路由 → 404 E_BAD_REQUEST', async () => {
