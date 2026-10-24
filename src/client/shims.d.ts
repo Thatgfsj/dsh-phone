@@ -8,9 +8,8 @@
  *   docs/calibration.md §4.1). scripts/build.mjs wraps the bundle in
  *   `window.__ModuleLoader__.load({ id, factory })`.
  * - `tinyh264/es/*` ships no type declarations; the soft decoder declares the
- *   surface it uses. `tinyh264` is a phantom (transitive) dependency today:
- *   it arrives through `@yume-chan/scrcpy-decoder-tinyh264`. Recorded in
- *   docs/client.md; the dependency owner (issue #11) may promote it.
+ *   surface it uses. `tinyh264` is a direct dependency (#17/#19); its wasm is
+ *   base64-embedded, so no extra asset is needed. Apache-2.0: see docs/client.md.
  */
 
 interface ModuleLoaderFactoryRequire {

@@ -1,84 +1,17 @@
 /**
  * Settings section for dsh-phone.
  *
- * Reads/writes only the frozen HTTP API (docs/protocol.md §1): GET/POST
- * `/dsh-phone/api/config` and GET `/dsh-phone/api/status`. The one-liner goes
- * to `attach.userHint`; "reset resolution" writes `attach.resolved:false` and
- * is deliberately a user click (SPEC §6.2: the Agent never resets it).
+ * Shows the resolved/endpoint/run state, edits the one-liner (`attach.userHint`)
+ * and lets the user reset resolution (`attach.resolved:false`). The HTTP client
+ * and its 409 retry policy live in settings-api.ts.
  *
- * Conflicts (409 `E_CONFIG_CONFLICT`) refresh the revision and retry once; a
- * second failure is shown to the user instead of looping.
+ * SPEC §6.2: resetting is a user action only; the Agent never calls it.
  */
 import type * as ReactNamespace from 'react'
 import type { Translate } from './panel.ts'
 import { CLIENT_CSS } from './styles.ts'
-
-export interface PhoneConfigView {
-  runtime: string
-  attach: { endpoint: string; userHint: string; resolved: boolean }
-  stream: { maxSize: number; maxFps: number; bitrate: number }
-  revision: number
-}
-
-export interface PhoneStatusView {
-  state: string
-  runtime: string
-  lastError?: string
-  endpoint?: { host: string; port: number }
-}
-
-export interface ConfigApi {
-  getConfig(): Promise<PhoneConfigView>
-  writeConfig(path: string[], value: unknown, revision: number): Promise<PhoneConfigView>
-  getStatus(): Promise<PhoneStatusView>
-}
-
-interface ApiErrorBody {
-  code?: string
-  message?: string
-}
-
-/** Error carrying the protocol error code (e.g. `E_CONFIG_CONFLICT`). */
-export class ConfigApiError extends Error {
-  readonly code: string
-  constructor(code: string, message: string) {
-    super(message)
-    this.name = 'ConfigApiError'
-    this.code = code
-  }
-}
-
-async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
-    ...init,
-  })
-  let payload: unknown
-  try {
-    payload = await response.json()
-  } catch {
-    payload = undefined
-  }
-  const record = (payload ?? {}) as { ok?: boolean; value?: T; error?: ApiErrorBody }
-  if (response.ok && record.ok === true) return record.value as T
-  const code = record.error?.code ?? (response.status === 503 ? 'E_NO_WEB' : 'E_HTTP')
-  const message = record.error?.message ?? `HTTP ${response.status}`
-  throw new ConfigApiError(code, message)
-}
-
-/** Browser `fetch` implementation of the frozen HTTP contract. */
-export function createFetchConfigApi(base = '/dsh-phone/api'): ConfigApi {
-  return {
-    getConfig: () => requestJson<PhoneConfigView>(`${base}/config`),
-    getStatus: () => requestJson<PhoneStatusView>(`${base}/status`),
-    writeConfig: (path, value, revision) =>
-      requestJson<PhoneConfigView>(`${base}/config`, {
-        method: 'POST',
-        body: JSON.stringify({ path, value, revision }),
-      }),
-  }
-}
+import { ConfigApiError, createFetchConfigApi, messageOf, writeWithConflictRetry } from './settings-api.ts'
+import type { ConfigApi, PhoneConfigView, PhoneStatusView } from './settings-api.ts'
 
 export interface SettingsDeps {
   React: typeof ReactNamespace
@@ -86,14 +19,6 @@ export interface SettingsDeps {
   api?: ConfigApi
   /** Opens the right-Sidebar phone tab (the Host decides the tab kind). */
   openPanel: () => void
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-function isConflict(error: unknown): boolean {
-  return error instanceof ConfigApiError && error.code === 'E_CONFIG_CONFLICT'
 }
 
 /** Build the settings section component for the current locale. */
@@ -143,16 +68,9 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
     const write = async (path: string[], value: unknown): Promise<PhoneConfigView> => {
       const current = config
       if (current === undefined) throw new ConfigApiError('E_NO_CONFIG', t('settings.unavailable'))
-      try {
-        return await api.writeConfig(path, value, current.revision)
-      } catch (failure) {
-        if (!isConflict(failure)) throw failure
-        const fresh = await load()
-        if (fresh === undefined) throw failure
-        const next = await api.writeConfig(path, value, fresh.revision)
-        setMessage(t('settings.hint.conflict'))
-        return next
-      }
+      const outcome = await writeWithConflictRetry(api, path, value, current.revision, load)
+      if (outcome.retried) setMessage(t('settings.hint.conflict'))
+      return outcome.value
     }
 
     const onSave = async (): Promise<void> => {

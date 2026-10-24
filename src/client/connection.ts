@@ -43,8 +43,12 @@ export interface ParsedVideoFrame {
 
 export interface ReadyMessage {
   type: 'ready'
+  /** Visible video size (the hello viewport). */
   width: number
   height: number
+  /** Optional real device framebuffer size, used for touch coordinates. */
+  deviceWidth?: number
+  deviceHeight?: number
   codec: string
   maxSize: number
   maxFps: number
@@ -167,6 +171,8 @@ export function parseServerMessage(raw: string): ServerMessage | undefined {
         width: Number(record.width) || 0,
         height: Number(record.height) || 0,
         codec: typeof record.codec === 'string' ? record.codec : 'h264',
+        deviceWidth: record.deviceWidth === undefined ? undefined : Number(record.deviceWidth),
+        deviceHeight: record.deviceHeight === undefined ? undefined : Number(record.deviceHeight),
         maxSize: Number(record.maxSize) || 0,
         maxFps: Number(record.maxFps) || 0,
       }

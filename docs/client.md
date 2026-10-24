@@ -71,7 +71,8 @@ id:'dsh-phone', order:60, label: () => t('settings.section') }, PhoneSettings))`
 
 - 全局单一 WebSocket：`ws(s)://<同源>/dsh-phone/stream`。
 - 首帧 text：`{type:'hello',protocol:1,viewport:{w,h},visible:true}`。
-- 下行 text：`ready{width,height,codec,maxSize,maxFps}` / `state{state,bootMs?}` /
+- 下行 text：`ready{width,height,codec,maxSize,maxFps,deviceWidth?,deviceHeight?}` /
+  `state{state,bootMs?}` /
   `pong{t}` / `error{code,message,retryable}`。
 - 下行 binary：8 字节头 `"DPH1"` + u32 meta（高 4 位 frameType：0 config/1 key/2 delta/
   3 audio/4 control；低 28 位 pts@90kHz）；payload 为 H.264 Annex-B。一个 WS message =
@@ -81,6 +82,14 @@ id:'dsh-phone', order:60, label: () => t('settings.section') }, PhoneSettings))`
 - 心跳：每 20s 发 ping；60s 无任何下行则判定半开 → 主动重连。
 - 不可见：`close(1000)`，不再重连（`IntersectionObserver` + `visibilitychange` 双检测，
   两者与后触发；见 `VisibilityGate`）。
+
+### 2.1 触摸坐标系（跨任务注意）
+
+协议 §2.1 的 `ready.width/height` 在已合并的 stream 实现里是**回声 hello viewport**
+（= 画面尺寸），不是设备 framebuffer 尺寸；而 `touch{x,y}` 需要设备像素坐标。
+客户端已前向兼容：`ready` 若带可选的 `deviceWidth/deviceHeight`（设备真实分辨率）
+则用它做触摸换算，否则退回 `width/height`。若 Host 不补该字段，720p 缩放下点击会
+偏移——已同步 Lead / stream owner 决策，客户端无需再改。
 
 ## 3. 解码路径与回退
 
@@ -112,9 +121,9 @@ esbuild 会把 `import.meta` 置空（运行期 `new URL(..., undefined)` 抛错
   **client bundle 因此增大**（本机 `lib/client.js` 约 204KB，其中约 150KB 来自
   tinyh264 glue+base64 wasm）。
 - 软解在主线程跑，720p/15fps 下 CPU 占用高于 worker 版本；只在硬解不可用时启用。
-- `tinyh264` 目前是**传递依赖**（经 `@yume-chan/scrcpy-decoder-tinyh264`），
-  `shims.d.ts` 声明了所用 API；建议依赖 owner（#11）把 `tinyh264` 提为直接依赖，
-  或后续显式移除 decoder 包。本 PR 不改 package.json。
+- `tinyh264` 已是直接依赖（#17/#19 起），`shims.d.ts` 声明了所用 API；
+  **许可为 Apache-2.0**，代码会内联进 `lib/client.js` 随包分发，第三方声明由
+  `docs/dependencies.md` 与文档任务 #7 维护（保留其 LICENSE 声明）。本 PR 不改 package.json。
 
 ## 4. 可见性门控（双检测）
 

@@ -103,7 +103,11 @@ export function createPhonePanel(deps: PanelDeps): ReactNamespace.ComponentType 
         onFrame: (frame: ParsedVideoFrame) => decoder.push(frame),
         onMessage: (message: ServerMessage) => {
           if (message.type === 'ready') {
-            deviceRef.current = { width: message.width, height: message.height }
+            // The Host may report the real framebuffer; fall back to the video size.
+            deviceRef.current = {
+              width: message.deviceWidth ?? message.width,
+              height: message.deviceHeight ?? message.height,
+            }
             decoder.renderer.setDeviceSize(message.width, message.height)
             setMeta({ width: message.width, height: message.height, codec: message.codec, maxFps: message.maxFps })
             setError(undefined)

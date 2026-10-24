@@ -73,6 +73,7 @@ export class StreamClient {
   #heartbeat: unknown
   #retry: unknown
   #lastMessageAt = 0
+  #lastError: { code: string; message: string; retryable: boolean } | undefined
   readonly #options: StreamClientOptions
   readonly #backoff: ReconnectBackoff
   readonly #now: () => number
@@ -182,7 +183,10 @@ export class StreamClient {
           this.#backoff.reset()
           this.#setState('ready')
         }
-        if (message.type === 'error' && !message.retryable) this.#setState('closed')
+        if (message.type === 'error') {
+          this.#lastError = { code: message.code, message: message.message, retryable: message.retryable }
+          if (!message.retryable) this.#setState('closed')
+        }
         this.#options.onMessage(message)
         return
       }
@@ -201,9 +205,10 @@ export class StreamClient {
         return
       }
       if (event?.code === 1008) {
-        // docs/protocol.md §3: E_AUTH/E_ORIGIN are not retryable.
+        // docs/protocol.md §3: E_AUTH/E_ORIGIN are not retryable. The Host also
+        // uses 1008 for E_BAD_REQUEST, so prefer the error frame it just sent.
         this.#setState('closed')
-        this.#options.onError?.({ code: 'E_AUTH', message: 'unauthorized', retryable: false })
+        this.#options.onError?.(this.#lastError ?? { code: 'E_AUTH', message: 'unauthorized', retryable: false })
         return
       }
       if (!this.#visible) {

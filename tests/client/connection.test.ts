@@ -89,13 +89,15 @@ test('client message builders match the frozen JSON shapes', () => {
 })
 
 test('parseServerMessage accepts the four server frames and drops others', () => {
-  assert.deepEqual(parseServerMessage('{"type":"ready","width":720,"height":1280,"codec":"h264","maxSize":720,"maxFps":15}'), {
+  assert.deepEqual(parseServerMessage('{"type":"ready","width":720,"height":1280,"codec":"h264","maxSize":720,"maxFps":15,"deviceWidth":1080,"deviceHeight":2400}'), {
     type: 'ready',
     width: 720,
     height: 1280,
     codec: 'h264',
     maxSize: 720,
     maxFps: 15,
+    deviceWidth: 1080,
+    deviceHeight: 2400,
   })
   assert.deepEqual(parseServerMessage('{"type":"state","state":"booting","bootMs":900}'), {
     type: 'state',
