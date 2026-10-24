@@ -32,3 +32,41 @@ export function describePanelGate(input: PanelGateInput): PanelGate {
   if (status === 'declined') return 'declined'
   return 'ready'
 }
+
+/** Attempts before the panel shows the unavailable state. */
+export const PANEL_CONFIG_ATTEMPTS = 4
+/** Delay between initial config read attempts (Host boot race, issue #47). */
+export const PANEL_CONFIG_RETRY_MS = 400
+
+export interface PanelConfigLoadOptions {
+  getConfig: () => Promise<PhoneConfigView>
+  sleep?: (ms: number) => Promise<void>
+  attempts?: number
+  delayMs?: number
+}
+
+export interface PanelConfigLoadResult {
+  config?: PhoneConfigView
+  error?: unknown
+}
+
+/**
+ * Read the panel config, retrying a few times so a Host that is still booting
+ * does not flash an unavailable/connection error on the panel first frame
+ * (issue #47). Never throws.
+ */
+export async function loadPanelConfig(options: PanelConfigLoadOptions): Promise<PanelConfigLoadResult> {
+  const attempts = Math.max(1, options.attempts ?? PANEL_CONFIG_ATTEMPTS)
+  const delayMs = options.delayMs ?? PANEL_CONFIG_RETRY_MS
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  let lastError: unknown
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return { config: await options.getConfig() }
+    } catch (error) {
+      lastError = error
+      if (attempt < attempts - 1) await sleep(delayMs)
+    }
+  }
+  return { error: lastError }
+}

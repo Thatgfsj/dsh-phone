@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { describeEmptyState } from '../../src/client/empty-state.ts'
-import { describePanelGate } from '../../src/client/gate.ts'
+import { describePanelGate, loadPanelConfig } from '../../src/client/gate.ts'
 import type { PhoneConfigView } from '../../src/client/settings-api.ts'
 
 const t = (key: string, vars?: Readonly<Record<string, string | number>>): string =>
@@ -48,4 +48,59 @@ test('describeEmptyState: unavailable carries the host error and offers retry', 
   assert.equal(copy.body, 'panel.empty.unavailableBody:HTTP 503')
   assert.equal(copy.hint, 'panel.empty.unavailableHint')
   assert.equal(copy.action, 'retry')
+})
+
+test('loadPanelConfig returns the first successful read without sleeping', async () => {
+  let loads = 0
+  let sleeps = 0
+  const result = await loadPanelConfig({
+    getConfig: async () => {
+      loads += 1
+      return view()
+    },
+    sleep: async () => {
+      sleeps += 1
+    },
+  })
+  assert.equal(result.config?.runtime, 'attach')
+  assert.equal(result.error, undefined)
+  assert.equal(loads, 1)
+  assert.equal(sleeps, 0)
+})
+
+test('loadPanelConfig retries transient failures so the first frame is not an error', async () => {
+  let loads = 0
+  let sleeps = 0
+  const result = await loadPanelConfig({
+    getConfig: async () => {
+      loads += 1
+      if (loads < 3) throw new Error('host booting')
+      return view({ status: 'pending', choice: '' })
+    },
+    sleep: async () => {
+      sleeps += 1
+    },
+  })
+  assert.equal(result.error, undefined)
+  assert.equal(result.config?.onboarding?.status, 'pending')
+  assert.equal(loads, 3)
+  assert.equal(sleeps, 2)
+})
+
+test('loadPanelConfig gives up with the last error after all attempts', async () => {
+  let loads = 0
+  let sleeps = 0
+  const result = await loadPanelConfig({
+    getConfig: async () => {
+      loads += 1
+      throw new Error('still down')
+    },
+    sleep: async () => {
+      sleeps += 1
+    },
+  })
+  assert.equal(result.config, undefined)
+  assert.equal((result.error as Error).message, 'still down')
+  assert.equal(loads, 4)
+  assert.equal(sleeps, 3)
 })
