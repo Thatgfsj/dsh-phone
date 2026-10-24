@@ -22,6 +22,16 @@ export {
   serverJarPath,
   SERVER_JAR_REMOTE,
 } from './scrcpy.ts'
+export {
+  DEFAULT_DOWNLOAD_TIMEOUT_MS,
+  defaultServerJarPath,
+  ensureScrcpyServer,
+  MANUAL_FETCH_COMMAND,
+  ScrcpyServerJarProvider,
+  ScrcpyServerUnavailableError,
+  scrcpyServerJarProvider,
+} from './jar-provider.ts'
+export type { JarDownloader, JarErrorCode, ScrcpyServerJarProviderOptions } from './jar-provider.ts'
 export { DEFAULT_STREAM_GRACE_MS, StreamSession } from './session.ts'
 export type { SessionClock, StreamSessionOptions } from './session.ts'
 export {
