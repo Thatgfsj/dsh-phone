@@ -6,12 +6,12 @@
  */
 
 import { AndroidKeyEventAction, AndroidMotionEventAction } from '@yume-chan/scrcpy'
-import type { ScrcpyControlMessageWriter } from '@yume-chan/scrcpy'
+import type { AndroidMotionEventAction as MotionAction, ScrcpyControlMessageWriter } from '@yume-chan/scrcpy'
 
 import type { StreamController, TouchAction } from './types.ts'
 
 /** 协议触摸动作 → Android motion event action。 */
-const MOTION_ACTION: Record<TouchAction, number> = {
+const MOTION_ACTION: Record<TouchAction, MotionAction> = {
   down: AndroidMotionEventAction.Down,
   move: AndroidMotionEventAction.Move,
   up: AndroidMotionEventAction.Up,

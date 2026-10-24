@@ -214,10 +214,11 @@ export class WebSocketConnection {
     payload.set(reasonBytes, 2)
     this.#write(encodeServerFrame(OPCODE.close, payload))
     const socket = this.#socket
+    // 先发 close 回调再 end：end 会同步触发 'end' → 1006，必须先认领正常 code。
+    this.#emitClose(code, reason)
     socket.end()
     const timer = setTimeout(() => socket.destroy(), 1000)
     timer.unref?.()
-    this.#emitClose(code, reason)
   }
 
   destroy(): void {

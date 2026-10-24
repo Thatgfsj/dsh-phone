@@ -45,7 +45,8 @@ function clampInt(value: number | undefined, min: number, max: number, fallback:
   return Math.min(max, Math.max(min, Math.trunc(value)))
 }
 
-type ScrcpyVideoStream = Awaited<NonNullable<Awaited<ReturnType<AdbScrcpyClient['videoStream']>>>>
+type ScrcpyClient = AdbScrcpyClient<AdbScrcpyOptionsLatest<true>>
+type ScrcpyVideoStream = Awaited<NonNullable<ScrcpyClient['videoStream']>>
 
 /**
  * 启动 scrcpy 会话。
@@ -75,7 +76,7 @@ export async function startStream(
 
   await AdbScrcpyClient.pushServer(raw, ReadableStream.from([jar]))
 
-  let client: AdbScrcpyClient<AdbScrcpyOptionsLatest<true>>
+  let client: ScrcpyClient
   try {
     client = await AdbScrcpyClient.start(raw, SERVER_JAR_REMOTE, scrcpyOptions)
   } catch (error) {
@@ -126,7 +127,7 @@ function bindSizeChanged(video: ScrcpyVideoStream, controller: ScrcpyController)
 }
 
 function createHandle(
-  client: AdbScrcpyClient<AdbScrcpyOptionsLatest<true>>,
+  client: ScrcpyClient,
   video: ScrcpyVideoStream,
   controller: ScrcpyController,
   info: Promise<StreamInfo>,
@@ -195,7 +196,7 @@ function createHandle(
 }
 
 /** client 挂载的 Adb 断连信号（yume-chan 客户端未直接暴露，退回 process 退出检测）。 */
-function adbDisconnected(_client: AdbScrcpyClient<AdbScrcpyOptionsLatest<true>>): Promise<void> {
+function adbDisconnected(_client: ScrcpyClient): Promise<void> {
   // 由 client.exited 覆盖；保留钩子便于后续接入 Adb.disconnected。
   return new Promise<void>(() => {})
 }
