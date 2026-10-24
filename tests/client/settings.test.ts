@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 
 import {
   ConfigApiError,
+  canEditConfig,
   createFetchConfigApi,
+  describeEnabled,
   messageOf,
   writeWithConflictRetry,
 } from '../../src/client/settings-api.ts'
@@ -105,4 +107,17 @@ test('request envelope parsing throws protocol-coded errors', async () => {
   } finally {
     globalThis.fetch = original
   }
+})
+
+
+test('describeEnabled maps the optional Host flag to three display states', () => {
+  assert.equal(describeEnabled(true), 'enabled')
+  assert.equal(describeEnabled(false), 'disabled')
+  assert.equal(describeEnabled(undefined), 'unknown')
+})
+
+test('canEditConfig hides every write path only when the plugin is disabled', () => {
+  assert.equal(canEditConfig(true), true)
+  assert.equal(canEditConfig(undefined), true, 'older Hosts keep the editable UI')
+  assert.equal(canEditConfig(false), false)
 })

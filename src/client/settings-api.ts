@@ -20,12 +20,16 @@ export interface PhoneConfigView {
   stream: { maxSize: number; maxFps: number; bitrate: number }
   /** Optional for forward compatibility: an older Host may omit it. */
   onboarding?: OnboardingState
+  /** Plugin master switch from the Host snapshot (#39/#52); absent on older Hosts. */
+  enabled?: boolean
   revision: number
 }
 
 export interface PhoneStatusView {
   state: string
   runtime: string
+  /** Elapsed boot time while state is booting (issue #39 item 4). */
+  bootMs?: number
   lastError?: string
   endpoint?: { host: string; port: number }
 }
@@ -145,3 +149,18 @@ export async function writeWithConflictRetry(
 }
 
 
+
+
+/** Read-only view of the plugin master switch (never writable from here). */
+export type EnabledView = 'enabled' | 'disabled' | 'unknown'
+
+/** Map the optional Host flag to a display state (missing = unknown). */
+export function describeEnabled(enabled: boolean | undefined): EnabledView {
+  if (enabled === undefined) return 'unknown'
+  return enabled ? 'enabled' : 'disabled'
+}
+
+/** While disabled the Host exposes config read-only, so hide every write path. */
+export function canEditConfig(enabled: boolean | undefined): boolean {
+  return enabled !== false
+}

@@ -10,7 +10,7 @@
 import type * as ReactNamespace from 'react'
 import type { Translate } from './i18n.ts'
 import { CLIENT_CSS } from './styles.ts'
-import { ConfigApiError, createFetchConfigApi, messageOf, readRunStatus, writeWithConflictRetry } from './settings-api.ts'
+import { ConfigApiError, canEditConfig, createFetchConfigApi, describeEnabled, messageOf, readRunStatus, writeWithConflictRetry } from './settings-api.ts'
 import type { ConfigApi, PhoneConfigView, PhoneStatusView } from './settings-api.ts'
 import { choiceLabelKey, createOnboardingCard, describeOnboarding } from './onboarding.ts'
 
@@ -106,6 +106,8 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
     }
 
     const mode = describeOnboarding(config)
+    const enabledView = describeEnabled(config?.enabled)
+    const editable = canEditConfig(config?.enabled)
     const rows: { label: string; value: string }[] = []
     if (config !== undefined) {
       rows.push({
@@ -118,6 +120,7 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
       })
       rows.push({ label: t('settings.state.runtime'), value: config.runtime })
       rows.push({ label: t('settings.state.onboarding'), value: t(choiceLabelKey(mode.choice)) })
+      rows.push({ label: t('settings.state.enabled'), value: t('settings.enabled.' + enabledView) })
     }
     if (status !== undefined) {
       rows.push({ label: t('settings.state.runState'), value: status.state })
@@ -140,7 +143,10 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
       h('p', { className: 'dshp-hint', style: { margin: 0 } }, t('settings.description')),
       loading ? h('p', { className: 'dshp-hint' }, t('settings.loading')) : null,
       error === undefined ? null : h('p', { className: 'dshp-error' }, error),
-      config === undefined
+      config !== undefined && !editable
+        ? h('p', { className: 'dshp-hint' }, t('settings.enabled.disabledHint'))
+        : null,
+      config === undefined || !editable
         ? null
         : h(OnboardingCard, {
             key: 'onboarding',
@@ -154,7 +160,7 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
             onMessage: (text: string) => setMessage(text),
             onError: (text: string | undefined) => setError(text),
           }),
-      mode.showSetup
+      mode.showSetup && editable
         ? h(
             'div',
             { className: 'dshp-field' },
@@ -195,7 +201,7 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
         ),
       )
         : null,
-      !mode.showSetup || rows.length === 0
+      (!mode.showSetup && editable) || rows.length === 0
         ? null
         : h(
             'dl',
@@ -205,7 +211,18 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
               h('dd', { key: `${row.label}-dd` }, row.value),
             ]),
           ),
-      mode.showSetup
+      !editable && config !== undefined
+        ? h(
+            'div',
+            { className: 'dshp-row' },
+            h(
+              'button',
+              { type: 'button', className: 'dshp-button', onClick: () => void load() },
+              t('settings.refresh'),
+            ),
+          )
+        : null,
+      editable && mode.showSetup
         ? h(
             'div',
             { className: 'dshp-row' },
