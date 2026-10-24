@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **首次使用守卫**（[#30](https://github.com/Thatgfsj/dsh-phone/issues/30)）：新增 `onboarding.status`
+  （`pending`/`accepted`/`declined`，默认 `pending`）与 `onboarding.choice`（`""`/emulator/redroid/attach）
+  两个 volatile 配置；pending 时任何 `phone_*` 工具（含 `phone_status`）返回 `E_ONBOARDING_REQUIRED`
+  （不启动运行时、不安装软件、不写配置），declined 返回 `E_ONBOARDING_DECLINED`；accepted + choice
+  等价显式运行时，accepted 无 choice 沿用 `runtime`。
+- **设置页首次使用引导卡片**（[#31](https://github.com/Thatgfsj/dsh-phone/issues/31)）：展示三种接入方式、
+  安装命令与体积（emulator 约 1.7GB），用户选择后写 `onboarding.status/choice`；拒绝后可随时重新打开；
+  插件不代装任何软件。
+- **首次使用文档与 Agent 技能**（[#32](https://github.com/Thatgfsj/dsh-phone/issues/32)）：`docs/usage.md`
+  增加「首次使用」章节（三种方式命令与 Agent 提问流程）、`docs/config.md` 增加 onboarding 字段与语义、
+  `skill/dsh-phone/SKILL.md` 增加「收到 `E_ONBOARDING_REQUIRED` 先征求用户同意」的硬流程。
+
 ## [v0.1.0] - 2026-10-25
 
 首个可用版本：给 DeepSeek Harness（DSH）提供一台运行在后端的 Android 实例，经浏览器右侧栏呈现，
