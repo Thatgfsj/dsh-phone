@@ -3,6 +3,11 @@
  * video/control socket → 异常退出清理。
  *
  * Host 零转码：video packet 的 `data` 原样交给 sink，不解码、不重编码。
+ * 两种启动形态：
+ * - `startStream`：video + control（人在看面板时）；
+ * - `startControlOnly`：只建 control socket（Agent 输入文本/按键，无人看面板时，
+ *   不启动视频编码、不浪费 CPU/带宽）。
+ *
  * 本机无真机/scrcpy 二进制，pushServer/实连路径标注为未验证（见 docs/stream.md）。
  */
 
@@ -13,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { AdbScrcpyClient, AdbScrcpyOptionsLatest } from '@yume-chan/adb-scrcpy'
 import { ReadableStream } from '@yume-chan/stream-extra'
 
-import type { AdbConnection } from '../adb/transport.ts'
+import type { AdbConnection } from '../adb/types.ts'
 import { ScrcpyController } from './control.ts'
 import { DEFAULT_STREAM_OPTIONS } from './types.ts'
 import type { StreamHandle, StreamInfo, StreamOptions, StreamSink } from './types.ts'
@@ -45,26 +50,44 @@ function clampInt(value: number | undefined, min: number, max: number, fallback:
   return Math.min(max, Math.max(min, Math.trunc(value)))
 }
 
-type ScrcpyClient = AdbScrcpyClient<AdbScrcpyOptionsLatest<true>>
-type ScrcpyVideoStream = Awaited<NonNullable<ScrcpyClient['videoStream']>>
+type ScrcpyClient = AdbScrcpyClient<AdbScrcpyOptionsLatest<boolean>>
+type ScrcpyVideoStream = NonNullable<Awaited<ScrcpyClient['videoStream']>>
 
 /**
- * 启动 scrcpy 会话。
+ * 启动 scrcpy 会话（video + control）。
  *
- * 失败时清理已建立的 socket/服务端进程后抛错，调用方（session/ws）负责
- * 把错误转成 `{type:'error',code:'E_STREAM_START_FAILED'}`。
+ * `extra.video === false` 时退化为 control-only（sink 不会被调用），等价
+ * {@link startControlOnly}。失败时清理已建立的 socket/服务端进程后抛错。
  */
 export async function startStream(
   adb: AdbConnection,
   options: StreamOptions,
   sink: StreamSink,
+  extra: { video?: boolean } = {},
+): Promise<StreamHandle> {
+  return startSession(adb, options, extra.video === false ? undefined : sink)
+}
+
+/**
+ * 只建 control socket（无视频编码）：供 Agent 的 INJECT_TEXT / keyevent 使用，
+ * 即使右侧栏没有 viewer 也不需要开视频流（SPEC §3.6）。
+ */
+export async function startControlOnly(adb: AdbConnection, options: StreamOptions): Promise<StreamHandle> {
+  return startSession(adb, options, undefined)
+}
+
+async function startSession(
+  adb: AdbConnection,
+  options: StreamOptions,
+  sink: StreamSink | undefined,
 ): Promise<StreamHandle> {
   const opts = normalizeStreamOptions(options)
+  const withVideo = sink !== undefined
   const jar = await loadServerJar()
   const raw = adb.raw
 
-  const scrcpyOptions = new AdbScrcpyOptionsLatest({
-    video: true,
+  const scrcpyOptions = new AdbScrcpyOptionsLatest<boolean>({
+    video: withVideo,
     audio: false,
     control: true,
     maxSize: opts.maxSize,
@@ -83,21 +106,26 @@ export async function startStream(
     throw new Error('scrcpy server 启动失败: ' + errorMessage(error), { cause: error })
   }
 
-  let video: ScrcpyVideoStream
-  try {
-    video = await client.videoStream
-  } catch (error) {
-    await client.close().catch(() => {})
-    throw new Error('scrcpy 视频流建立失败: ' + errorMessage(error), { cause: error })
+  let video: ScrcpyVideoStream | undefined
+  if (withVideo) {
+    try {
+      video = client.videoStream ? await client.videoStream : undefined
+    } catch (error) {
+      await client.close().catch(() => {})
+      throw new Error('scrcpy 视频流建立失败: ' + errorMessage(error), { cause: error })
+    }
+    if (!video) {
+      await client.close().catch(() => {})
+      throw new Error('scrcpy 视频流建立失败: videoStream 为空')
+    }
   }
 
   const controller = new ScrcpyController(client.controller, {
-    width: video.metadata.width ?? opts.maxSize,
-    height: video.metadata.height ?? opts.maxSize,
+    width: video?.metadata.width ?? opts.maxSize,
+    height: video?.metadata.height ?? opts.maxSize,
   })
-  const info = streamInfo(video)
-  bindSizeChanged(video, controller)
-  return createHandle(client, video, controller, info, sink)
+  if (video) bindSizeChanged(video, controller)
+  return createHandle(client, video, controller, video ? streamInfo(video) : undefined, sink)
 }
 
 async function loadServerJar(): Promise<Uint8Array> {
@@ -128,12 +156,13 @@ function bindSizeChanged(video: ScrcpyVideoStream, controller: ScrcpyController)
 
 function createHandle(
   client: ScrcpyClient,
-  video: ScrcpyVideoStream,
+  video: ScrcpyVideoStream | undefined,
   controller: ScrcpyController,
-  info: Promise<StreamInfo>,
-  sink: StreamSink,
+  info: Promise<StreamInfo> | undefined,
+  sink: StreamSink | undefined,
 ): StreamHandle {
-  const reader = video.stream.getReader()
+  const reader = video?.stream.getReader()
+  const videoSink = sink
   let stopped = false
   let failureSent = false
 
@@ -141,10 +170,12 @@ function createHandle(
     if (stopped) return
     stopped = true
     controller.close()
-    try {
-      await reader.cancel()
-    } catch {
-      // 读端已结束时 cancel 可能抛错，忽略。
+    if (reader) {
+      try {
+        await reader.cancel()
+      } catch {
+        // 读端已结束时 cancel 可能抛错，忽略。
+      }
     }
     try {
       await client.close()
@@ -157,48 +188,40 @@ function createHandle(
     if (stopped || failureSent) return
     failureSent = true
     try {
-      sink.error(error)
+      videoSink?.error(error)
     } catch {
       // sink 是 ws 层；回调异常不得导致进程崩溃。
     }
     void stop()
   }
 
-  void (async () => {
-    try {
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        if (stopped) break
-        if (value.type === 'configuration') {
-          sink.video(value.data)
-        } else {
-          sink.video(value.data, { keyframe: value.keyframe, pts: value.pts })
+  if (reader && videoSink) {
+    void (async () => {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (stopped) break
+          if (value.type === 'configuration') {
+            videoSink.video(value.data)
+          } else {
+            videoSink.video(value.data, { keyframe: value.keyframe, pts: value.pts })
+          }
         }
+      } catch (error) {
+        fail(new Error('scrcpy 视频流读取失败: ' + errorMessage(error), { cause: error }))
+        return
       }
-    } catch (error) {
-      fail(new Error('scrcpy 视频流读取失败: ' + errorMessage(error), { cause: error }))
-      return
-    }
-    if (!stopped) fail(new Error('scrcpy 视频流已结束（服务端退出）'))
-  })().catch(() => {})
+      if (!stopped) fail(new Error('scrcpy 视频流已结束（服务端退出）'))
+    })().catch(() => {})
+  }
 
   void client.exited.then(
     () => fail(new Error('scrcpy server 异常退出')),
     (error: unknown) => fail(new Error('scrcpy server 异常退出: ' + errorMessage(error), { cause: error })),
   ).catch(() => {})
 
-  void Promise.resolve(adbDisconnected(client)).then(() => {
-    fail(new Error('ADB 连接已断开'))
-  }).catch(() => {})
-
-  return { stop, controller, info }
-}
-
-/** client 挂载的 Adb 断连信号（yume-chan 客户端未直接暴露，退回 process 退出检测）。 */
-function adbDisconnected(_client: ScrcpyClient): Promise<void> {
-  // 由 client.exited 覆盖；保留钩子便于后续接入 Adb.disconnected。
-  return new Promise<void>(() => {})
+  return { stop, controller, ...(info ? { info } : {}) }
 }
 
 function errorMessage(error: unknown): string {

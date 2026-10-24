@@ -37,7 +37,9 @@ payload 不做解码、重编码、缩放、合并或拆分（仅因背压整包
 | `session.ts` | viewer 引用计数、startStream 单飞、5s 宽限期、断开清理 |
 | `websocket.ts` | 最小 RFC 6455 服务端帧编解码（基线无 `ws` 依赖） |
 | `ws-messages.ts` | 文本消息形状校验（hello/touch/key/text/visibility/ping） |
-| `ws.ts` | `registerStreamRoute(ctx)`：upgrade 鉴权、hello 时序、控制转发、连接替换 |
+| `ws-connection.ts` | 单连接状态机：hello 时序、viewer attach/detach、DPH1 封帧、背压、异常清理 |
+| `ws.ts` | upgrade 路由工厂：`createStreamUpgradeHandler` / `createStreamUpgradeRoute` / `registerStreamRoute` |
+| `index.ts` | **稳定入口**：host 只 import 本文件（startStream/startControlOnly/工厂/类型） |
 
 ## 3. scrcpy-server
 
@@ -104,25 +106,56 @@ interface PhoneStreamService {
   inputText(text: string): Promise<void>
   key(name: string): Promise<void>
 }
-
-// Host 入口装配（建议显式传 getService；缺省依次探测 ctx.get('dshPhoneService'|'phoneService'|'dshPhone')）
-registerStreamRoute(ctx, {
-  getService: () => phoneService,
-  getStreamOptions: () => config.stream, // ready 消息展示用；缺省 720/15/2Mbps
-})
 ```
 
+**host 只 import `../stream/index.ts`**（稳定入口）：
+
+```ts
+import {
+  createStreamUpgradeRoute, startControlOnly, startStream, StreamSession,
+  type StreamHandle, type StreamSink,
+} from './stream/index.ts'
+
+// 有人看面板（video + control）
+await startStream(adb, config.stream, sink)
+
+// 无 viewer，但 Agent 需要 INJECT_TEXT / keyevent：
+// 只建 control socket，**不建 video socket、不启动视频编码**（SPEC §3.6）
+const controlOnly: StreamHandle = await startControlOnly(adb, config.stream)
+await controlOnly.controller.injectText('中文输入')
+await controlOnly.controller.injectKey('HOME')
+
+// 视频引用计数会话（PhoneService 持有；0 viewer 宽限 5s 停流）
+new StreamSession({ start: (sink) => startStream(adb, config.stream, sink) })
+
+// WS：host 自己注册（鉴权由 getConnection 注入，失败回 401/403）
+const route = createStreamUpgradeRoute({
+  service: phoneService,
+  getConnection: () => ctx.connection,
+  getStreamOptions: () => config.stream,
+})
+ctx.webServer.registerUpgrade(route) // { path: '/dsh-phone/stream', handler }
+
+// 或让 stream 层自行注册（内部复用同一个 handler；缺省从 ctx.get 探测服务键）
+registerStreamRoute(ctx, { getService: () => phoneService })
+```
+
+- `startStream(adb, options, sink, { video?: false })` 与 `startControlOnly(adb, options)` 等价：
+  **video=false 时不开 video socket/不启动编码**，返回的 `StreamHandle.controller` 仍可用
+  （injectText/injectTouch/injectKey），`info` 为空。
 - `StreamSession`（session.ts）由 PhoneService 持有：
   `new StreamSession({ start: (sink) => startStream(adb, config.stream, sink) })`；
   `addViewer(sink)` 返回 release，由 PhoneService.startStream 透传给 ws 层。
-- `AdbConnection` 以 `import type` 从 `../adb/transport.ts` 引入（runtime #3 冻结接口：
-  `raw: Adb` 供 scrcpy 使用），本 PR 不复制实现、不修改 ADB 层。
+- `AdbConnection` 以 `import type` 从 `../adb/types.ts` 引入（runtime #3 合并后的实际位置；
+  transport.ts 只 import 未 re-export。冻结字段见 docs/architecture.md §3.2：`raw: Adb` 供 scrcpy 使用）；
+  本 PR 不复制实现、不修改 ADB 层。
 - scrcpy 控制通道不可用时注入会抛错（不会静默吞掉）；按键名未知抛 `RangeError`。
 
 ### 与冻结文档的偏差（需 Lead 确认）
 
-1. `registerStreamRoute(ctx)` 增加可选第二参数 `deps`（`getService/getStreamOptions/helloTimeoutMs/...`）。
-   单参调用仍可用：缺省从 `ctx.get()` 探测服务键。原因：host 的服务注册键尚未在 docs 冻结。
+1. `registerStreamRoute(ctx)` 增加可选第二参数 `deps`；另有稳定入口 `index.ts` 与
+   `createStreamUpgradeRoute(deps) -> { path, handler }` / `createStreamUpgradeHandler(deps) -> handler`。
+   原因：host 的路由装配方式与 service 注册键未在 docs 冻结。
 2. `ready.width/height` 取客户端 hello 的 `viewport`（`startStream` 冻结返回类型不含元信息）。
    客户端应以 SPS 解码出的真实尺寸为准；如需精确值，可在后续把 `StreamInfo` 加入 host 契约。
 3. WebSocket 服务端为自实现最小 RFC 6455（基线无 `ws` 依赖）；仅覆盖 DSH 同源场景。
@@ -147,5 +180,6 @@ node --test tests/stream/*.test.ts
    （docs/calibration.md 未验证项 #4）；单测用假 connection 覆盖。
 4. 镜像回退（ghproxy.net / ghfast.top）可用性未逐个验证；官方 URL 已实测下载并通过 sha256。
 5. 浏览器侧 WebCodecs/TinyH264 解码、真实 720p/15fps/2Mbps 带宽与背压表现未验证（属 client #6）。
-6. 本 PR 的 `AdbConnection` 为 `import type`；runtime 的 `src/adb/transport.ts` 合并前
-   `npm run typecheck` 会报 `TS2307`（预期）。本地用临时 stub 验证其余类型通过，stub 未提交。
+6. `AdbConnection` 的落点是 `src/adb/types.ts`（docs/architecture.md 写的 `transport.ts` 并未
+   re-export）；runtime #15 合并后已按真实类型跑通 typecheck。若后续 runtime 在 transport.ts 补
+   re-export，本层可切回。

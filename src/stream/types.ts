@@ -5,7 +5,9 @@
  * → ws.ts（DPH1 封帧 + WebSocket 下行）。本文件只放类型，不引入运行时依赖。
  */
 
-import type { AdbConnection } from '../adb/transport.ts'
+// runtime #3 实现把 AdbConnection 放在 adb/types.ts（transport.ts 只 import 未 re-export）；
+// 冻结字段见 docs/architecture.md §3.2。
+import type { AdbConnection } from '../adb/types.ts'
 
 export type { AdbConnection }
 
