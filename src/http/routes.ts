@@ -152,6 +152,14 @@ function toApiError(error: unknown): ApiError {
   if (error instanceof RuntimeUnavailableError) {
     return new ApiError(503, 'E_RUNTIME_UNAVAILABLE', error.message, false)
   }
+  // issue #44：设备尚未就绪（冷启动窗口内截图输出异常）按可重试的 booting 中间态返回
+  if ((error as { code?: unknown } | null)?.code === 'device-not-ready') {
+    return new ApiError(200, 'E_BOOTING', '设备正在就绪（可能仍在开机），稍后重试', true)
+  }
+  // issue #44：设备尚未就绪（冷启动窗口内截图输出异常）按可重试的 booting 中间态返回
+  if ((error as { code?: unknown } | null)?.code === 'device-not-ready') {
+    return new ApiError(200, 'E_BOOTING', '设备正在就绪（可能仍在开机），稍后重试', true)
+  }
   if (error instanceof ConfigWriteError) {
     if (error.code === 'conflict') return new ApiError(409, 'E_CONFIG_CONFLICT', error.message, true)
     if (error.code === 'bad-path') return new ApiError(400, 'E_BAD_PATH', error.message)
