@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { PHONE_TOOL_FACTORIES, PHONE_TOOL_NAMES, createPhoneTools, registerPhoneTools } from '../../src/tools/index.ts'
+import { RuntimeUnavailableError } from '../../src/runtime/types.ts'
 import { makeAttachments, makeService, makeToolHost } from './fakes.ts'
 
 function defs() {
@@ -138,6 +139,23 @@ test('phone_screenshot：有 attachments 输出 image block，渲染 text+image'
   assert.equal(blocks.length, 2)
   assert.deepEqual(blocks[0], { type: 'text', text: value.message })
   assert.equal((blocks[1] as { type: string }).type, 'image')
+})
+
+test('phone_status：runtime 不可用 → 结构化 E_RUNTIME_UNAVAILABLE + hints（与其它工具语义一致）', async () => {
+  const service = makeService({
+    status: async () => {
+      throw new RuntimeUnavailableError('attach', ['请安装 Docker 或 Android SDK Emulator'])
+    },
+  })
+  const tool = createPhoneTools({ service }).find((d) => d.name === 'phone_status')!
+  const value = (await tool.execute({}, {} as never)) as any
+  assert.equal(value.ok, false)
+  assert.equal(value.code, 'E_RUNTIME_UNAVAILABLE')
+  assert.equal(value.retryable, false)
+  assert.match((value.hints ?? []).join('\n'), /Docker/)
+  const blocks = tool.output.render({}, value as never)
+  assert.match((blocks[0] as { text: string }).text, /E_RUNTIME_UNAVAILABLE/)
+  assert.match((blocks[0] as { text: string }).text, /Docker/)
 })
 
 test('phone_screenshot：runtime 不可用 → E_RUNTIME_UNAVAILABLE（schema 含 hints，不炸 output 校验）', async () => {

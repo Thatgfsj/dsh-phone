@@ -1,7 +1,7 @@
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
-import type { ToolDeps } from './common.ts'
+import { type ToolDeps } from './common.ts'
 
 const STATUS_SCHEMA = {
   type: 'object',
@@ -23,6 +23,11 @@ const STATUS_SCHEMA = {
       },
     },
     lastError: { type: 'string' },
+    // runtime 决策树全失败时的结构化错误（与其它工具 E_RUNTIME_UNAVAILABLE 语义一致）
+    ok: { type: 'boolean' },
+    code: { type: 'string' },
+    retryable: { type: 'boolean' },
+    hints: { type: 'array', items: { type: 'string' } },
   },
 } as const
 
@@ -36,6 +41,10 @@ interface StatusLike {
   bootMs?: number
   endpoint?: { host: string; port: number }
   lastError?: string
+  ok?: boolean
+  code?: string
+  retryable?: boolean
+  hints?: string[]
 }
 
 function renderStatus(status: StatusLike): string {
@@ -46,6 +55,10 @@ function renderStatus(status: StatusLike): string {
   if (status.memPct !== undefined) parts.push(`memPct=${status.memPct}`)
   if (status.uptimeMs !== undefined) parts.push(`uptimeMs=${status.uptimeMs}`)
   if (status.lastError) parts.push(`lastError=${status.lastError}`)
+  if (status.code) parts.unshift(`${status.code}: ${status.lastError ?? ''}`.trim())
+  if (status.hints && status.hints.length > 0) {
+    return parts.join(' ') + '\n' + status.hints.join('\n')
+  }
   return parts.join(' ')
 }
 
@@ -62,7 +75,24 @@ export function createStatusTool(deps: ToolDeps): ToolDefinition {
       render: (_args, value) => [{ type: 'text', text: renderStatus(value) }],
     },
     async execute() {
-      return deps.service.status()
+      try {
+        return await deps.service.status()
+      } catch (error) {
+        // 与其它工具一致：runtime 不可用返回结构化 E_RUNTIME_UNAVAILABLE + 安装指引
+        const hints = (error as { hints?: unknown } | null)?.hints
+        return {
+          state: 'stopped',
+          runtime: 'attach',
+          platform: 'other',
+          lastError: error instanceof Error ? error.message : String(error),
+          ok: false,
+          code: 'E_RUNTIME_UNAVAILABLE',
+          retryable: false,
+          hints: Array.isArray(hints)
+            ? hints.filter((hint): hint is string => typeof hint === 'string')
+            : [],
+        }
+      }
     },
   })
 }

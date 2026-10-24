@@ -21,6 +21,7 @@ import {
 } from '../config/write.ts'
 import type { SettingsFacade } from '../config/write.ts'
 import type { PhoneOperations, PhoneStatus } from '../phone/contracts.ts'
+import { RuntimeUnavailableError } from '../runtime/types.ts'
 import { rejectionFor, sendRejection } from './auth.ts'
 import type { ConnectionLike } from './auth.ts'
 import { ApiError, readJsonBody, sendError, sendPng, sendSuccess } from './json.ts'
@@ -115,6 +116,10 @@ function mapConfigError(res: ServerResponse, error: ConfigWriteError): void {
 
 function toApiError(error: unknown): ApiError {
   if (error instanceof ApiError) return error
+  // 决策树全失败：503 + 安装指引（docs/protocol.md §3、issue #28）
+  if (error instanceof RuntimeUnavailableError) {
+    return new ApiError(503, 'E_RUNTIME_UNAVAILABLE', error.message, false)
+  }
   if (error instanceof ConfigWriteError) {
     if (error.code === 'conflict') return new ApiError(409, 'E_CONFIG_CONFLICT', error.message, true)
     if (error.code === 'bad-path') return new ApiError(400, 'E_BAD_PATH', error.message)

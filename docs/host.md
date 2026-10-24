@@ -72,7 +72,7 @@ Host 不直接读写 `cordis.patch.yml`，不自行实现 runtime/收流；runti
 
 | 工具 | 参数 | 要点 |
 |---|---|---|
-| `phone_status` | — | 任何任务第一步；`isConcurrencySafe:()=>true`；返回 state/runtime/platform/cpuPct/memPct/uptimeMs/bootMs/endpoint |
+| `phone_status` | — | 任何任务第一步；`isConcurrencySafe:()=>true`；返回 state/runtime/platform/cpuPct/memPct/uptimeMs/bootMs/endpoint；决策树全失败时返回 `{ok:false, code:'E_RUNTIME_UNAVAILABLE', retryable:false, hints}`（与 HTTP 503 语义一致，issue #28） |
 | `phone_screenshot` | — | `attachments.saveImage` → `[{type:'text'},{type:'image'}]`；附件缺失/失败/超限降级文本，不整体失败 |
 | `phone_tap` | `x,y` (integer, required) | 坐标必须来自截图/控件树；描述写明前置条件 |
 | `phone_swipe` | `x1,y1,x2,y2,durationMs` | 同上 |
@@ -184,6 +184,7 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 | 写后 phone_status 复验失败 | 502 | `E_DEVICE_DISCONNECTED` | true |
 | 回读校验失败 / 设备命令失败 | 500 | `E_DEVICE_COMMAND` | true |
 | 实例启动中（screenshot 路由） | 200 | `E_BOOTING`（带 bootMs） | true |
+| runtime 决策树全失败（GET /status 等） | 503 | `E_RUNTIME_UNAVAILABLE`（message 含完整安装指引） | false |
 
 工具层错误：`E_BOOTING`（带 bootMs）、`E_RUNTIME_UNAVAILABLE`（带安装指引 hints，不可重试）、
 `E_TIMEOUT`、`E_DEVICE_COMMAND`。

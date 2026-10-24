@@ -133,7 +133,7 @@ interface PhoneStatus {
 | `E_BAD_PATH` | 400 | false | config 写路径不在白名单 |
 | `E_CONFIG_CONFLICT` | 409 | true | revision 不匹配（刷新后重试一次） |
 | `E_NOT_VERIFIED` | 409 | false | 试图写 endpoint 但未通过 verify（R5） |
-| `E_RUNTIME_UNAVAILABLE` | 200/WS error | false | 决策树全失败，含安装指引 |
+| `E_RUNTIME_UNAVAILABLE` | 503（HTTP 路由）/ WS error | false | 决策树全失败，message 含完整安装指引（工具路径返回结构化 `ok:false+hints`） |
 | `E_BOOTING` | 200/WS state | true | 启动中，带 `bootMs` |
 | `E_STREAM_START_FAILED` | WS error | true | scrcpy server 启动/推包失败 |
 | `E_STREAM_BUSY` | WS error | true | 已有会话且无法替换（正常不应出现） |
