@@ -20,6 +20,9 @@ import type * as ReactNamespace from 'react'
 import { NS, en, zh } from './i18n.ts'
 import { createPhonePanel, createPhonePanelTitle } from './panel.ts'
 import { createPhoneSettings } from './settings.ts'
+import { HEADER_SLOT, createPhoneHeaderButton, headerRegistrationOptions, openPhoneTab } from './header.ts'
+import { maybeAutoOpenPhone } from './auto-open.ts'
+import { createFetchConfigApi } from './settings-api.ts'
 
 /** Tab definition id; also the key used by both sidebar seats. */
 export const TAB_ID = '@local/dsh-phone/tab'
@@ -70,6 +73,13 @@ export default function createDshPhoneClient(require: FactoryRequire) {
       const PhonePanel = createPhonePanel({ React, t })
       const PhonePanelTitle = createPhonePanelTitle({ React, t })
       const PhoneSettings = createPhoneSettings({ React, t, openPanel })
+      const PhoneHeaderButton = createPhoneHeaderButton({
+        React,
+        t,
+        openTab: () => {
+          openPhoneTab(ctx.sidebarRight, PHONE_KIND)
+        },
+      })
 
       ctx.effect(
         () =>
@@ -91,12 +101,23 @@ export default function createDshPhoneClient(require: FactoryRequire) {
           PhonePanelTitle,
         ),
       )
+      ctx.slots.inject(HEADER_SLOT, () =>
+        ctx.slots.register(headerRegistrationOptions(t, NS), PhoneHeaderButton),
+      )
       ctx.slots.inject('settings.section', () =>
         ctx.slots.register(
           { name: 'settings.section', id: SETTINGS_ID, order: 60, label: () => t('settings.section') },
           PhoneSettings,
         ),
       )
+
+      // Best effort: opening needs an adopted Session; retry <=10s, never blocks or throws.
+      void maybeAutoOpenPhone({
+        getConfig: () => createFetchConfigApi().getConfig(),
+        openTab: () => ctx.sidebarRight.openTab(PHONE_KIND),
+        sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+        now: () => Date.now(),
+      }).catch(() => {})
     },
   }
 }

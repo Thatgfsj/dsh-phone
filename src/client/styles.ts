@@ -79,6 +79,17 @@ export const CLIENT_CSS = `
 .dshp-card-title { margin: 0; font-size: 13px; }
 .dshp-options { display: flex; flex-direction: column; gap: 10px; }
 .dshp-option { display: flex; flex-direction: column; gap: 4px; }
+.dshp-header-button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0;
+  color: var(--dsw-alias-text-secondary);
+  background: transparent;
+  border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+}
+.dshp-header-button:hover { background: var(--dsw-alias-bg-hover); color: var(--dsw-alias-text-primary); }
+.dshp-header-button:focus-visible { outline: 2px solid var(--dsw-alias-border-accent); outline-offset: 1px; }
+.dshp-empty { display: flex; flex-direction: column; gap: 8px; padding: 8px 4px; }
+.dshp-empty-title { font-weight: 600; }
 .dshp-command {
   display: block; margin: 2px 0; padding: 6px 8px; border-radius: 6px;
   background: var(--dsw-alias-bg-tertiary); color: var(--dsw-alias-text-primary);

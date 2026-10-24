@@ -13,6 +13,9 @@ export const NS = 'dsh-phone'
 
 export type Dict = Record<string, string>
 
+/** Translate function bound to one locale namespace. */
+export type Translate = (key: string, vars?: Readonly<Record<string, string | number>>) => string
+
 export const zh: Dict = {
   'panel.title': '手机',
   'panel.status.idle': '未连接',
@@ -92,6 +95,17 @@ export const zh: Dict = {
   'onboarding.choiceLabel.redroid': 'redroid 容器',
   'onboarding.choiceLabel.attach': '已有实例（attach）',
   'onboarding.choiceLabel.none': '未选择',
+  'header.open': '打开手机面板',
+  'panel.empty.checking': '正在检查手机状态…',
+  'panel.empty.pendingTitle': '手机尚未启用',
+  'panel.empty.pendingBody': '首次使用需要你的确认：启用后会启动后端 Android 实例，运行中约占用 2GB 内存与相应 CPU。',
+  'panel.empty.declinedTitle': '已暂停使用',
+  'panel.empty.declinedBody': '手机实例已暂停，不会占用 CPU/内存。可随时重新启用。',
+  'panel.empty.unavailableTitle': '手机服务不可用',
+  'panel.empty.unavailableBody': '无法读取手机配置（Host 未启用或不可达）：{message}',
+  'panel.empty.unavailableHint': '请确认插件已安装并在 profile 中启用，然后点「重新检测」。',
+  'panel.empty.settingsHint': '也可以随时在 设置 → 手机 中完成同样的操作。',
+  'panel.empty.retry': '重新检测',
 }
 
 export const en: Dict = {
@@ -173,6 +187,17 @@ export const en: Dict = {
   'onboarding.choiceLabel.redroid': 'redroid container',
   'onboarding.choiceLabel.attach': 'Existing instance (attach)',
   'onboarding.choiceLabel.none': 'Not selected',
+  'header.open': 'Open phone panel',
+  'panel.empty.checking': 'Checking phone status…',
+  'panel.empty.pendingTitle': 'Phone is not enabled yet',
+  'panel.empty.pendingBody': 'First use needs your confirmation: enabling starts a back-end Android instance that uses about 2GB of memory and some CPU while running.',
+  'panel.empty.declinedTitle': 'Phone is paused',
+  'panel.empty.declinedBody': 'The Android instance is paused, so it uses no CPU or memory. Re-enable it at any time.',
+  'panel.empty.unavailableTitle': 'Phone service unavailable',
+  'panel.empty.unavailableBody': 'Could not read the phone configuration (Host disabled or unreachable): {message}',
+  'panel.empty.unavailableHint': 'Make sure the plugin is installed and enabled in the profile, then press Retry.',
+  'panel.empty.settingsHint': 'The same actions are also available under Settings → Phone.',
+  'panel.empty.retry': 'Retry',
 }
 
 /** Choose a dictionary for one active locale id, defaulting to English. */

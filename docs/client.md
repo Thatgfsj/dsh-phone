@@ -9,7 +9,12 @@
 ```
 src/client/
   index.ts      入口：export default function(require) → { name, inject, apply }
-  panel.ts      右侧栏 tab body（canvas/状态/重连/按键）+ 标题 seat 组件
+  panel.ts       面板外壳：先读 /config 做 onboarding/Host 门控，再挂 streaming view；标题 seat
+  panel-view.ts  tab body 的 streaming 视图（canvas/状态/重连/按键）
+  header.ts      会话头部入口按钮（conversation.session.header.utilities list seat）
+  auto-open.ts   onboarding accepted 时 best-effort 自动打开（≤10s 静默重试）
+  gate.ts        面板门控判定（checking/ready/pending/declined/unavailable）
+  empty-state.ts 面板空态：可读文案 + 内嵌 onboarding 三态卡
   settings.ts    设置页（onboarding 卡片/一句话/解析状态/重置/打开面板）
   settings-api.ts HTTP 客户端 + 409 冲突重试 + onboarding 类型 + 状态容错读取
   onboarding.ts  首次使用引导：三态描述 + 写入流程（纯函数）+ 卡片组件
@@ -68,6 +73,21 @@ id:'dsh-phone', order:60, label: () => t('settings.section') }, PhoneSettings))`
 （`credentials:'same-origin'`）。409 `E_CONFIG_CONFLICT` → 重新 GET 取 revision 后
 **重试一次**，再失败显示可读错误。「重置解析」写 `attach.resolved:false`，仅用户点击，
 带 `window.confirm`，Agent 侧不会调用。
+
+### 1.3 会话头部入口与自动打开（issue #45）
+
+- 入口注册在 **`conversation.session.header.utilities`**（list、右对齐、`replaceRisk: none`）：
+  `ctx.slots.inject(HEADER_SLOT, () => ctx.slots.register(headerRegistrationOptions(t, NS), PhoneHeaderButton))`
+  （id `dsh-phone`、order 50）。按钮是内联手机 SVG（16px），`title`/`aria-label` 走 i18n
+  `header.open`；点击 `ctx.sidebarRight.openTab('dshPhone')`，`try/catch` 静默（无会话不报错）。
+  **不使用** `conversation.session.header.corner`：该 single slot 已被官方
+  `client-ui-sidebar-right ExpandButton` 占用（catalog `replaceRisk: shadows-shipped-ui`），
+  注册会遮蔽官方右栏展开按钮（review 已确认改用 utilities）。
+- **自动打开（best effort）**：`apply()` 末尾 `void maybeAutoOpenPhone({...})`——读一次
+  `GET /dsh-phone/api/config`；仅 `onboarding.status === 'accepted'`（旧 Host 缺字段视为 accepted）
+  时调用 `openTab`；shell 尚未 adopt 会话时抛错 → 每 500ms 重试、最多 10s 后静默放弃；
+  配置读取失败返回 `unavailable`。全程不阻塞 apply、不抛错。
+- 打开幂等：右栏按 contentId 去重/reveal；header 与设置页「打开手机面板」打开同一 tab。
 
 ## 2. 视频协议（客户端视角）
 
@@ -140,6 +160,22 @@ esbuild 会把 `import.meta` 置空（运行期 `new URL(..., undefined)` 抛错
 二者都为真才可见；变化经 `StreamClient.setVisible`：不可见立即 `close(1000)` 并清空定时器，
 可见时立即重连（`hello.visible=true`）。Host 侧据此把 viewer 计数归零并停流。
 
+### 4.1 面板空态与 onboarding 门控
+
+tab body 挂载时先 `GET /dsh-phone/api/config`，由 `describePanelGate()` 决定渲染：
+
+- `checking`：「正在检查手机状态…」占位；
+- `ready`（accepted，或旧 Host 无 onboarding 字段）：挂 `panel-view.ts`，开始建流/解码；
+- `pending` / `declined` / `unavailable`：渲染可读空态（`empty-state.ts`），**不建 WebSocket**、
+  不黑屏。pending/declined 内嵌 `onboarding.ts` 三态卡（pending 可直接选运行时写入、declined 可
+  重新启用）；Host 不可用显示错误摘要 +「重新检测」。
+- **偏差**：DSH 0.2.1-rc.2 未向第三方 client 插件暴露「打开设置页/手机分区」的公开服务
+  （settings shell 的 open/openSection 是 ui-settings-general 内部 store，shortcuts 服务也没有
+  按 id 执行命令的 API），所以「也可在 设置 → 手机 中操作」是文案指引，实际入口是内嵌卡
+  （issue #45 允许的方案）；不使用 DOM hack。
+- 面板不读 `GET /status`，pending 时该接口的 `200 + ok:false E_ONBOARDING_REQUIRED` 不影响面板；
+  设置页由 `readRunStatus()` 容错。
+
 ## 5. 首次使用引导（onboarding，issue #31）
 
 配合 Host 侧 onboarding 守卫（issue #30）。契约：
@@ -195,7 +231,8 @@ node scripts/check-file-lines.mjs
 
 覆盖：DPH1 解帧/校验/pts 换算、hello/touch/key/text/ping 序列化、server text 解析、
 重连退避与抖动、可见性门控、不可见断流（`close(1000)`、无重连）、心跳半开重连、
-设备坐标换算（letterbox/夹取）、WebCodecs configure/chunk 参数、codec string、I420→RGBA、软解真实关键帧。
+设备坐标换算（letterbox/夹取）、WebCodecs configure/chunk 参数、codec string、I420→RGBA、软解真实关键帧、
+header 入口注册与点击→openTab、auto-open 条件/重试/超时/不抛错、面板空态三态判定与文案。
 
 ## 7. 未验证项（真实浏览器 / 真实 Host 待 task-8）
 1. WebCodecs 在 Chrome/Firefox/Safari 对 `avc.format='annexb'` + in-band SPS/PPS 的接受度；
@@ -209,3 +246,5 @@ node scripts/check-file-lines.mjs
 6. 面板真实渲染（主题 token、明暗切换、画布尺寸）未验证——task-8 负责。
 
 7. onboarding 三态与写入（含 409 重试、`E_ONBOARDING_REQUIRED` 容错）只有单测；真实页面交互未验证（#8）。
+8. 会话头部按钮在真实 header 的可见性/间距（utilities 右对齐列表）、点击后右栏展开行为未验证（#8）。
+9. 自动打开的 adopt 时机（10s 窗口是否足够）未验证；仅单测覆盖重试/超时/静默失败。

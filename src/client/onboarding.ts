@@ -15,7 +15,7 @@
  * sequencing and the 409 retry are unit-tested without rendering.
  */
 import type * as ReactNamespace from 'react'
-import type { Translate } from './panel.ts'
+import type { Translate } from './i18n.ts'
 import { ONBOARDING_INSTALL_COMMANDS } from '../runtime/install-guide.ts'
 import { messageOf, writeWithConflictRetry, type ConfigApi, type OnboardingChoice, type PhoneConfigView } from './settings-api.ts'
 
