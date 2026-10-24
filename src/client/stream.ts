@@ -4,7 +4,7 @@
  * Split from connection.ts (wire format + visibility gate) so each file stays
  * small; this half owns the socket lifecycle, reconnect backoff and heartbeat.
  */
-import type { ParsedVideoFrame, ServerMessage, KeyName, TouchAction, Viewport } from './connection.ts'
+import type { ParsedVideoFrame, ServerMessage, KeyName, TouchAction } from './connection.ts'
 import {
   NORMAL_CLOSURE,
   ReconnectBackoff,
@@ -47,7 +47,7 @@ export interface StreamClientOptions {
   createSocket?: (url: string) => SocketLike
   /** Override for tests / alternate origins. */
   url?: string
-  viewport?: () => Viewport
+  viewport?: () => { w: number; h: number }
   now?: () => number
   setTimer?: (callback: () => void, delayMs: number) => unknown
   clearTimer?: (handle: unknown) => void

@@ -69,3 +69,15 @@ export const KEY_SHORTCUTS: Readonly<Record<string, string>> = {
 export function mapKeyboardKey(key: string): string | undefined {
   return KEY_SHORTCUTS[key]
 }
+
+/** Device key buttons rendered under the panel canvas (label keys are i18n ids). */
+export const KEY_BUTTONS: readonly {
+  name: 'HOME' | 'BACK' | 'RECENTS' | 'ENTER' | 'DEL'
+  label: string
+}[] = [
+  { name: 'HOME', label: 'panel.keys.home' },
+  { name: 'BACK', label: 'panel.keys.back' },
+  { name: 'RECENTS', label: 'panel.keys.recents' },
+  { name: 'ENTER', label: 'panel.keys.enter' },
+  { name: 'DEL', label: 'panel.keys.del' },
+]

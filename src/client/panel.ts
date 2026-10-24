@@ -17,7 +17,7 @@ import { VisibilityGate } from './connection.ts'
 import { CLIENT_CSS } from './styles.ts'
 import { StreamClient } from './stream.ts'
 import type { StreamState } from './stream.ts'
-import { mapKeyboardKey, mapPointerToDevice } from './input.ts'
+import { KEY_BUTTONS, mapKeyboardKey, mapPointerToDevice } from './input.ts'
 
 export type Translate = (key: string, vars?: Readonly<Record<string, string | number>>) => string
 
@@ -25,14 +25,6 @@ export interface PanelDeps {
   React: typeof ReactNamespace
   t: Translate
 }
-
-const KEY_BUTTONS: readonly { name: 'HOME' | 'BACK' | 'RECENTS' | 'ENTER' | 'DEL'; label: string }[] = [
-  { name: 'HOME', label: 'panel.keys.home' },
-  { name: 'BACK', label: 'panel.keys.back' },
-  { name: 'RECENTS', label: 'panel.keys.recents' },
-  { name: 'ENTER', label: 'panel.keys.enter' },
-  { name: 'DEL', label: 'panel.keys.del' },
-]
 
 /** Build the panel body component for the current locale. */
 export function createPhonePanel(deps: PanelDeps): ReactNamespace.ComponentType {

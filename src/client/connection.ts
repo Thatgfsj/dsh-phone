@@ -86,11 +86,6 @@ export type KeyName =
   | 'VOLUME_DOWN'
   | 'POWER'
 
-export interface Viewport {
-  w: number
-  h: number
-}
-
 function bytesOf(input: ArrayBuffer | ArrayBufferView): Uint8Array | undefined {
   if (input instanceof ArrayBuffer) return new Uint8Array(input)
   if (ArrayBuffer.isView(input)) {
@@ -125,7 +120,7 @@ export function parseBinaryFrame(input: ArrayBuffer | ArrayBufferView | unknown)
 }
 
 /** Serialize the mandatory first client frame. */
-export function helloMessage(viewport: Viewport, visible: boolean): string {
+export function helloMessage(viewport: { w: number; h: number }, visible: boolean): string {
   return JSON.stringify({ type: 'hello', protocol: 1, viewport, visible })
 }
 
