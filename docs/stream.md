@@ -32,6 +32,7 @@ payload 不做解码、重编码、缩放、合并或拆分（仅因背压整包
 |---|---|
 | `types.ts` | `StreamSink` / `StreamHandle` / `StreamController` / `StreamOptions` / `PhoneStreamService` 冻结契约 |
 | `frames.ts` | DPH1 帧头编解码、scrcpy packet → frameType、µs→90kHz ticks、单调时钟 |
+| `device-size.ts` | `adb shell wm size` → 设备物理分辨率（Physical/Override），按 endpoint 缓存 + 进程级快照 |
 | `control.ts` | INJECT_TEXT（中文）、INJECT_TOUCH、INJECT_KEYCODE；按键名映射 |
 | `scrcpy.ts` | push scrcpy-server、start 会话、video 读循环、异常退出清理 |
 | `session.ts` | viewer 引用计数、startStream 单飞、5s 宽限期、断开清理 |
@@ -86,10 +87,13 @@ byte 8..   H.264 Annex-B payload（与 scrcpy packet.data 逐字节一致）
   不自写 Origin 比较（由 connection 层 fence 负责）。
 - 首条必须 `hello`（`protocol:1`、`viewport{w,h}`、`visible`），5s 超时按 1008 关闭；
   重复 hello / 非 JSON / 非 hello 首条 → `{type:'error',code:'E_BAD_REQUEST'}` + close 1008。
-- 下行：`ready`（width/height 取 hello viewport；codec/maxSize/maxFps）、`state`（booting/running/paused）、
-  `pong`、`error`。
+- 下行：`ready`（width/height 取 hello viewport；**deviceWidth/deviceHeight 为 `wm size` 设备分辨率**，
+  解析失败省略；codec/maxSize/maxFps）、`state`（booting/running/paused）、`pong`、`error`。
 - 上行：`touch`/`key`/`text`（转发 PhoneService；异常回 `E_DEVICE_COMMAND`）、
   `visibility`（false → release viewer；true → 重新 attach）、`ping`（原样 pong）。
+- 触摸坐标：客户端按 `ready.deviceWidth/deviceHeight` 把面板坐标换算为**设备坐标**；Host 的
+  `ScrcpyController` 再按 `设备尺寸 → 视频尺寸`（`maxSize` 降采样）等比换算为 scrcpy 视频坐标注入，
+  避免 1080x2400 真机在 720p 流下偏移。`wm size` 在每次 scrcpy 启动时查询一次并按 endpoint 缓存。
 - 同一时刻只保留一条流连接：新连接到来时旧连接以 code 1000 关闭（避免重复 viewer）。
 - socket close/error → 立即 release viewer；Session 在 0 viewer 后 5s 停流。
 - 视频会话异常（启动失败/读失败/服务端退出）→ `{type:'error',code:'E_STREAM_START_FAILED',retryable:true}`
@@ -156,8 +160,8 @@ registerStreamRoute(ctx, { getService: () => phoneService })
 1. `registerStreamRoute(ctx)` 增加可选第二参数 `deps`；另有稳定入口 `index.ts` 与
    `createStreamUpgradeRoute(deps) -> { path, handler }` / `createStreamUpgradeHandler(deps) -> handler`。
    原因：host 的路由装配方式与 service 注册键未在 docs 冻结。
-2. `ready.width/height` 取客户端 hello 的 `viewport`（`startStream` 冻结返回类型不含元信息）。
-   客户端应以 SPS 解码出的真实尺寸为准；如需精确值，可在后续把 `StreamInfo` 加入 host 契约。
+2. `ready.width/height` 仍取客户端 hello 的 `viewport`（向后兼容旧客户端）；新增可选
+   `deviceWidth/deviceHeight`（`wm size` Physical size，解析失败省略）。新增不影响既有字段语义。
 3. WebSocket 服务端为自实现最小 RFC 6455（基线无 `ws` 依赖）；仅覆盖 DSH 同源场景。
 
 ## 7. 测试
@@ -168,7 +172,8 @@ node --test tests/stream/*.test.ts
 
 覆盖：DPH1 字节序/类型映射/pts 回绕与负值/超大包、控制消息映射与中文文本、RFC 6455 握手向量与
 掩码/分片/ping-pong/close、WS 鉴权拒绝、hello 校验与超时、viewer 计数与 5s 宽限、**断开/隐藏清理**、
-**新连接替换旧连接**、异常流错误码、scrcpy-server 下载脚本的 sha256/--check/参数解析。
+**新连接替换旧连接**、异常流错误码、`wm size` 解析/缓存与 ready device 字段序列化、触摸设备→视频坐标换算、
+scrcpy-server 下载脚本的 sha256/--check/参数解析。
 全部使用假 adb/假 socket，不依赖真机、scrcpy 二进制或网络（下载脚本测试只做本地文件校验）。
 
 ## 8. 未验证项（本机条件限制）
@@ -180,6 +185,8 @@ node --test tests/stream/*.test.ts
    （docs/calibration.md 未验证项 #4）；单测用假 connection 覆盖。
 4. 镜像回退（ghproxy.net / ghfast.top）可用性未逐个验证；官方 URL 已实测下载并通过 sha256。
 5. 浏览器侧 WebCodecs/TinyH264 解码、真实 720p/15fps/2Mbps 带宽与背压表现未验证（属 client #6）。
-6. `AdbConnection` 的落点是 `src/adb/types.ts`（docs/architecture.md 写的 `transport.ts` 并未
+6. `wm size` 输出解析只覆盖 Android 常见格式（`Physical size` / `Override size`）；折叠屏/多显示/
+   旋转场景的物理尺寸稳定性未在真机验证（按 endpoint 缓存，假设查询期间分辨率不变）。
+7. `AdbConnection` 的落点是 `src/adb/types.ts`（docs/architecture.md 写的 `transport.ts` 并未
    re-export）；runtime #15 合并后已按真实类型跑通 typecheck。若后续 runtime 在 transport.ts 补
    re-export，本层可切回。

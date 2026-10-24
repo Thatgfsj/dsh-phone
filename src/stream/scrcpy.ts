@@ -20,6 +20,7 @@ import { ReadableStream } from '@yume-chan/stream-extra'
 
 import type { AdbConnection } from '../adb/types.ts'
 import { ScrcpyController } from './control.ts'
+import { queryDeviceSize } from './device-size.ts'
 import { DEFAULT_STREAM_OPTIONS } from './types.ts'
 import type { StreamHandle, StreamInfo, StreamOptions, StreamSink } from './types.ts'
 
@@ -86,6 +87,9 @@ async function startSession(
   const jar = await loadServerJar()
   const raw = adb.raw
 
+  // 启动时查询一次设备物理分辨率并缓存（wm size Physical size）；失败则省略字段。
+  const deviceSize = await queryDeviceSize(adb).catch(() => undefined)
+
   const scrcpyOptions = new AdbScrcpyOptionsLatest<boolean>({
     video: withVideo,
     audio: false,
@@ -124,8 +128,9 @@ async function startSession(
     width: video?.metadata.width ?? opts.maxSize,
     height: video?.metadata.height ?? opts.maxSize,
   })
+  if (deviceSize) controller.setDeviceSize(deviceSize.width, deviceSize.height)
   if (video) bindSizeChanged(video, controller)
-  return createHandle(client, video, controller, video ? streamInfo(video) : undefined, sink)
+  return createHandle(client, video, controller, video ? streamInfo(video, deviceSize) : undefined, sink)
 }
 
 async function loadServerJar(): Promise<Uint8Array> {
@@ -140,11 +145,15 @@ async function loadServerJar(): Promise<Uint8Array> {
   }
 }
 
-function streamInfo(video: ScrcpyVideoStream): Promise<StreamInfo> {
+function streamInfo(
+  video: ScrcpyVideoStream,
+  deviceSize: { width: number; height: number } | undefined,
+): Promise<StreamInfo> {
   return Promise.resolve({
     width: video.metadata.width ?? 0,
     height: video.metadata.height ?? 0,
     codec: 'h264' as const,
+    ...(deviceSize ? { deviceWidth: deviceSize.width, deviceHeight: deviceSize.height } : {}),
   })
 }
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { recordDeviceSize } from '../../src/stream/device-size.ts'
 import { registerStreamRoute } from '../../src/stream/ws.ts'
 import type { StreamRouteContext } from '../../src/stream/ws.ts'
 import type { PhoneStreamService, StreamSink } from '../../src/stream/types.ts'
@@ -283,4 +284,41 @@ test('视频流异常：下发 error 文本并以 1011 关闭', async () => {
   assert.equal(error?.code, 'E_STREAM_START_FAILED')
   assert.equal(error?.retryable, true)
   assert.equal(closeCode(socket), 1011)
+})
+
+test('ready 携带 wm size 的 deviceWidth/deviceHeight，同时保留 viewport 回声', async () => {
+  recordDeviceSize({ width: 1080, height: 2400 })
+  try {
+    const { ctx, route } = makeCtx()
+    const { service } = makeService()
+    registerStreamRoute(ctx, { getService: () => service })
+    const socket = new FakeSocket()
+    open(route(), socket)
+    await flush()
+    await send(socket, { type: 'hello', protocol: 1, viewport: { w: 720, h: 1280 } })
+
+    const ready = textFrames(socket.bytes()).find((message) => message.type === 'ready')
+    assert.equal(ready?.deviceWidth, 1080)
+    assert.equal(ready?.deviceHeight, 2400)
+    assert.equal(ready?.width, 720, 'width/height 仍是 hello viewport（向后兼容）')
+    assert.equal(ready?.height, 1280)
+  } finally {
+    recordDeviceSize(undefined)
+  }
+})
+
+test('wm size 解析失败时 ready 省略 device 字段（客户端回退 viewport）', async () => {
+  recordDeviceSize(undefined)
+  const { ctx, route } = makeCtx()
+  const { service } = makeService()
+  registerStreamRoute(ctx, { getService: () => service })
+  const socket = new FakeSocket()
+  open(route(), socket)
+  await flush()
+  await send(socket, { type: 'hello', protocol: 1, viewport: { w: 720, h: 1280 } })
+
+  const ready = textFrames(socket.bytes()).find((message) => message.type === 'ready')
+  assert.equal(ready !== undefined, true)
+  assert.equal('deviceWidth' in (ready ?? {}), false)
+  assert.equal('deviceHeight' in (ready ?? {}), false)
 })

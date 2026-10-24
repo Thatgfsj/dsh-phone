@@ -39,6 +39,13 @@ export type {
   StreamRouteDeps,
   StreamUpgradeDeps,
 } from './ws.ts'
+export {
+  parseWmSize,
+  peekDeviceSize,
+  queryDeviceSize,
+  recordDeviceSize,
+} from './device-size.ts'
+export type { DeviceSize } from './device-size.ts'
 export { DEFAULT_STREAM_OPTIONS } from './types.ts'
 export type {
   AdbConnection,

@@ -92,7 +92,7 @@ interface PhoneStatus {
 | type | 字段 | 语义 |
 |---|---|---|
 | `hello` | `protocol`, `viewport{w,h}`, `visible` | 必须首条；重复则关闭连接 |
-| `touch` | `action:'down'\|'move'\|'up'`, `x`, `y`（设备坐标） | 转 scrcpy `controller.injectTouch` |
+| `touch` | `action:'down'\|'move'\|'up'`, `x`, `y`（**设备坐标**，按 `ready.deviceWidth/deviceHeight` 换算） | Host 等比换算为 scrcpy 视频坐标后 `controller.injectTouch` |
 | `key` | `name:'HOME'\|'BACK'\|'RECENTS'\|'ENTER'\|'DEL'...` | 转 `injectKeyCode` |
 | `text` | `text:string` | 转 `controller.injectText`（**中文走这里**，非 shell input text） |
 | `visibility` | `visible:boolean` | false 时服务端可暂停编码侧资源；true 触发重新 hello 语义 |
@@ -102,10 +102,16 @@ interface PhoneStatus {
 
 | type | 字段 | 语义 |
 |---|---|---|
-| `ready` | `width,height,codec,maxSize,maxFps` | 流已建立 |
+| `ready` | `width,height,codec,maxSize,maxFps,deviceWidth?,deviceHeight?` | 流已建立；device 字段为设备物理分辨率（`wm size`），解析失败时省略 |
 | `state` | `state`, `bootMs?` | 状态变化（booting/running/paused/stopped） |
 | `pong` | `t` | 心跳回应 |
 | `error` | `code`, `message`, `retryable` | 见 §3 |
+
+- `ready.deviceWidth/deviceHeight`（可选）：Host 在 scrcpy 启动时执行一次 `adb shell wm size`，取
+  `Physical size: WxH`（缺失时回退 `Override size`）并缓存；解析失败则**省略字段**。客户端应优先用它
+  把面板坐标换算成设备坐标，缺省时回退 hello 的 `viewport`（向后兼容）。
+- `touch` 的 `x/y` 是设备坐标；Host 按 `设备尺寸 → scrcpy 视频尺寸`（`maxSize` 降采样）等比换算后注入，
+  因此 1080x2400 真机在 720p 流下也不会偏移。`ready.width/height` 仍为 hello viewport 回声（兼容旧客户端）。
 
 ### 2.4 重连与可见性
 

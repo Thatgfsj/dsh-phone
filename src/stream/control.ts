@@ -85,17 +85,29 @@ export interface ScreenSize {
 export class ScrcpyController implements StreamController {
   #writer: ScrcpyControlMessageWriter | undefined
   #screen: ScreenSize
+  #device: ScreenSize | undefined
 
   constructor(writer: ScrcpyControlMessageWriter | undefined, screen: ScreenSize) {
     this.#writer = writer
     this.#screen = { width: screen.width, height: screen.height }
   }
 
-  /** scrcpy 上报视频尺寸变化时更新触摸消息的设备坐标基准。 */
+  /** scrcpy 上报视频尺寸变化时更新触摸消息的视频坐标基准。 */
   setScreenSize(width: number, height: number): void {
     if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
       this.#screen = { width, height }
     }
+  }
+
+  /** 设备物理分辨率（wm size）；用于把设备坐标换算为 scrcpy 视频坐标。 */
+  setDeviceSize(width: number, height: number): void {
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+      this.#device = { width, height }
+    }
+  }
+
+  get deviceSize(): ScreenSize | undefined {
+    return this.#device ? { ...this.#device } : undefined
   }
 
   get screenSize(): ScreenSize {
@@ -114,9 +126,13 @@ export class ScrcpyController implements StreamController {
 
   async injectTouch(action: TouchAction, x: number, y: number): Promise<void> {
     const writer = this.#requireWriter()
-    // 面板按设备坐标下发；越界坐标夹到屏幕内，避免 scrcpy 服务端丢事件。
-    const px = clamp(Math.round(x), 0, Math.max(0, this.#screen.width - 1))
-    const py = clamp(Math.round(y), 0, Math.max(0, this.#screen.height - 1))
+    // 面板按「设备坐标」下发（docs/protocol.md §2.3）；scrcpy 的 injectTouch 需要
+    // 「视频坐标」+ videoWidth/Height，降采样时按设备/视频比例换算，避免触摸偏移。
+    const device = this.#device
+    const videoX = device ? (x * this.#screen.width) / device.width : x
+    const videoY = device ? (y * this.#screen.height) / device.height : y
+    const px = clamp(Math.round(videoX), 0, Math.max(0, this.#screen.width - 1))
+    const py = clamp(Math.round(videoY), 0, Math.max(0, this.#screen.height - 1))
     const isUp = action === 'up'
     await writer.injectTouch({
       action: MOTION_ACTION[action],
