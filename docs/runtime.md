@@ -1,7 +1,8 @@
 # 运行时与 ADB 层实现说明（#3）
 
-> 需求原文见 [SPEC.md](./SPEC.md) §3.1–§3.5；接口以 [INTERFACES.md](../.dsh-phone-brief/INTERFACES.md)
-> 与 [architecture.md](./architecture.md) §3 为准。本文记录**实现方式、取舍、与文档的偏差、以及本机未验证项**。
+> 需求原文见 [SPEC.md](./SPEC.md) §3.1–§3.5；冻结接口以 [architecture.md](./architecture.md) §3
+> 与 [calibration.md](./calibration.md) 的源码校准为准（早期协作简报不在仓库内）。
+> 本文记录**实现方式、取舍、与文档的偏差、以及本机未验证项**。
 
 ## 1. 范围与文件
 
