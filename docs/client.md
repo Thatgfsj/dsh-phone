@@ -83,10 +83,11 @@ id:'dsh-phone', order:60, label: () => t('settings.section') }, PhoneSettings))`
   **不使用** `conversation.session.header.corner`：该 single slot 已被官方
   `client-ui-sidebar-right ExpandButton` 占用（catalog `replaceRisk: shadows-shipped-ui`），
   注册会遮蔽官方右栏展开按钮（review 已确认改用 utilities）。
-- **自动打开（best effort，issue #45/#47）**：`apply()` 末尾 `void maybeAutoOpenPhone({...})`——读一次
-  `GET /dsh-phone/api/config`，只要 `onboarding.status !== 'declined'`（**`pending` 也尝试**；旧 Host 缺字段
-  视为 accepted）就调用 `openTab`；shell 尚未 adopt 会话时抛错 → 每 500ms 重试、最多 10s 后静默放弃；
-  `declined` 不自动打开（会话头部按钮仍可手动打开）；配置读取失败返回 `unavailable`。全程不阻塞 apply、不抛错。
+- **自动打开（best effort）**：`apply()` 末尾 `void maybeAutoOpenPhone({...})`——读一次
+  `GET /dsh-phone/api/config`；**除 `declined` 外都尝试打开**（pending 也打开：面板首屏就是
+  同意卡片，见 §4.1；accepted 打开；旧 Host 缺字段视为 accepted）。shell 尚未 adopt 会话时
+  抛错 → 每 500ms 重试、最多 10s 后静默放弃；配置读取失败返回 `unavailable`。
+  全程不阻塞 apply、不抛错。`declined` 不自动打开，header 图标仍可手动进入。
 - **pending 自动打开后的第一眼**：面板内是 onboarding 三态卡（§4.1），用户可直接选运行时并同意，
   无需先去设置页；`declined` 时自动打开被跳过，手动打开会显示「已暂停使用」+ 重新启用。
 - 打开幂等：右栏按 contentId 去重/reveal；header、设置页与自动打开打开同一 tab。
@@ -178,7 +179,10 @@ esbuild 会把 `import.meta` 置空（运行期 `new URL(..., undefined)` 抛错
 
 tab body 挂载时先 `GET /dsh-phone/api/config`，由 `describePanelGate()` 决定渲染：
 
-- `checking`：「正在检查手机状态…」占位；
+- `checking`：「正在检查手机状态…」占位。初次读取会**短暂重试**（`gate.ts` 的
+  `loadPanelConfig`：4 次 × 400ms），避免 Host 还在启动时首帧闪出 unavailable/连接错误
+  （issue #47）；全部失败才进入 `unavailable`。pending 由 auto-open 自动呈现时，首屏直接是
+  确认卡 + 选项，无需先找设置页；
 - `ready`（accepted，或旧 Host 无 onboarding 字段）：挂 `panel-view.ts`，开始建流/解码；
 - `pending` / `declined` / `unavailable`：渲染可读空态（`empty-state.ts`），**不建 WebSocket**、
   不黑屏。pending/declined 内嵌 `onboarding.ts` 三态卡（pending 可直接选运行时写入、declined 可
@@ -246,7 +250,8 @@ node scripts/check-file-lines.mjs
 覆盖：DPH1 解帧/校验/pts 换算、hello/touch/key/text/ping 序列化、server text 解析、
 重连退避与抖动、可见性门控、不可见断流（`close(1000)`、无重连）、心跳半开重连、
 设备坐标换算（letterbox/夹取）、WebCodecs configure/chunk 参数、codec string、I420→RGBA、软解真实关键帧、
-header 入口注册与点击→openTab、auto-open 条件/重试/超时/不抛错、面板空态三态判定与文案。
+header 入口注册与点击→openTab、auto-open 三态条件（pending 打开 / declined 跳过 / accepted 打开）
+与重试/超时/不抛错、面板空态三态判定与文案、初次配置读取重试（首帧不闪错）。
 
 ## 7. 未验证项（真实浏览器 / 真实 Host 待 task-8）
 1. WebCodecs 在 Chrome/Firefox/Safari 对 `avc.format='annexb'` + in-band SPS/PPS 的接受度；
@@ -262,5 +267,6 @@ header 入口注册与点击→openTab、auto-open 条件/重试/超时/不抛�
 7. onboarding 三态与写入（含 409 重试、`E_ONBOARDING_REQUIRED` 容错）只有单测；真实页面交互未验证（#8）。
 8. 会话头部按钮在真实 header 的可见性/间距（utilities 右对齐列表）、点击后右栏展开行为未验证（#8）。
 9. 自动打开的 adopt 时机（10s 窗口是否足够）未验证；仅单测覆盖重试/超时/静默失败。
-10. 动态安装后「刷新页面 → 入口/自动打开出现」的真实页面流程未验证（#48 依据 DSH 客户端模块加载模型与
+10. pending 自动打开 + Host 冷启动竞态下的真实首屏顺序（是否确实先卡片、无错误闪动）需 #8 真机确认。
+11. 动态安装后「刷新页面 → 入口/自动打开出现」的真实页面流程未验证（#48 依据 DSH 客户端模块加载模型与
     用户反馈整理；「刷新不中断会话」为设计语义，Host 侧会话与实例状态不受页面刷新影响）。

@@ -1,10 +1,15 @@
 /**
- * Best-effort auto-open of the phone tab on plugin load (issue #45).
+ * Best-effort auto-open of the phone tab on plugin load (issue #45, #47).
  *
  * The right Sidebar only accepts `openTab` once a Session is on screen and its
  * store has been adopted; plugins load before that. So we poll gently for up to
  * 10 seconds and then give up silently. Nothing here may block the plugin or
  * raise: the header button/settings page remain the explicit paths.
+ *
+ * Every onboarding state except declined opens the tab (#47): on pending the
+ * panel itself asks for consent, so first-time users see the phone in the
+ * sidebar without hunting for the settings page. Declined stays closed; the
+ * header icon is still a manual way in.
  */
 export interface AutoOpenConfig {
   onboarding?: { status: string }
@@ -29,7 +34,7 @@ export const AUTO_OPEN_TIMEOUT_MS = 10_000
 export const AUTO_OPEN_POLL_MS = 500
 
 /**
- * Open the phone tab when onboarding is accepted, retrying while the shell is
+ * Open the phone tab unless onboarding was declined, retrying while the shell is
  * not ready yet.
  * @param options - config reader, opener and injectable clock/sleep.
  * @returns why it stopped (never throws).
@@ -45,7 +50,8 @@ export async function maybeAutoOpenPhone(options: AutoOpenOptions): Promise<Auto
   }
   // A Host without the onboarding field (older build) counts as accepted.
   const status = config.onboarding?.status ?? 'accepted'
-  if (status !== 'accepted') return 'skipped'
+  // Pending also opens (#47): the panel renders the consent card itself.
+  if (status === 'declined') return 'skipped'
   const deadline = options.now() + timeoutMs
   for (;;) {
     try {

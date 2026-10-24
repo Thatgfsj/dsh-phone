@@ -13,7 +13,7 @@ import { messageOf } from './settings-api.ts'
 import { createFetchConfigApi } from './settings-api.ts'
 import type { ConfigApi, PhoneConfigView } from './settings-api.ts'
 import { createPanelEmptyState } from './empty-state.ts'
-import { describePanelGate } from './gate.ts'
+import { describePanelGate, loadPanelConfig } from './gate.ts'
 import type { PanelGate } from './gate.ts'
 import { createPhonePanelView } from './panel-view.ts'
 
@@ -39,6 +39,17 @@ export function createPhonePanel(deps: PanelDeps): ReactNamespace.ComponentType 
     const aliveRef = React.useRef(true)
 
     const load = React.useCallback(async (): Promise<PhoneConfigView | undefined> => {
+      // Retry a few times: auto-open can mount this panel before the Host has
+      // finished booting, and the first frame must be the consent card rather
+      // than a connection error (issue #47).
+      const result = await loadPanelConfig({ getConfig: () => api.getConfig() })
+      if (!aliveRef.current) return result.config
+      setConfig(result.config)
+      setError(result.error)
+      return result.config
+    }, [])
+
+    const reload = React.useCallback(async (): Promise<PhoneConfigView | undefined> => {
       try {
         const next = await api.getConfig()
         if (aliveRef.current) {
@@ -46,8 +57,7 @@ export function createPhonePanel(deps: PanelDeps): ReactNamespace.ComponentType 
           setError(undefined)
         }
         return next
-      } catch (failure) {
-        if (aliveRef.current) setError(failure)
+      } catch {
         return undefined
       }
     }, [])
@@ -73,7 +83,7 @@ export function createPhonePanel(deps: PanelDeps): ReactNamespace.ComponentType 
             gate,
             config,
             api,
-            reload: load,
+            reload,
             onConfig: (next: PhoneConfigView) => {
               setConfig(next)
               setError(undefined)
