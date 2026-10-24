@@ -144,6 +144,8 @@ activity/window/display/battery/cpuinfo/meminfo/gfxinfo/input/power/wifi。
   ② 无 `Origin` 头；③ `x-dsh-phone-token` 与文件 token 常量时间相等。任一不满足则回退
   `ctx.connection.requestRejection` 的原有校验；token 错误且无同源 cookie → 401 `E_AUTH`。
 - R5/R4 不因通道变化：未 verify 的 endpoint 仍 409 `E_NOT_VERIFIED`；写后仍 describe 回读 + phone_status 复验。
+- **R2 收口**：`/agent/config` **禁止写 `attach.userHint`**（返回 403 `E_FORBIDDEN`，不落盘）——
+  一句话原文只由用户在设置页修改；浏览器 `POST /config` 仍允许写 userHint。
 - 清理：插件 dispose（卸载/重载）时删除 token 文件；重载会生成新 token（旧 token 立即失效）。
 
 Agent 侧标准流程（docs 片段，也写进 README）：
@@ -176,6 +178,7 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 | 配置路径不在三键白名单 | 400 | `E_BAD_PATH` | false |
 | revision 冲突（重试一次后） | 409 | `E_CONFIG_CONFLICT` | true |
 | 写 endpoint/resolved 前未 verify | 409 | `E_NOT_VERIFIED` | false |
+| Agent 通道试图写 userHint（R2） | 403 | `E_FORBIDDEN` | false |
 | 写后 phone_status 复验失败 | 502 | `E_DEVICE_DISCONNECTED` | true |
 | 回读校验失败 / 设备命令失败 | 500 | `E_DEVICE_COMMAND` | true |
 | 实例启动中（screenshot 路由） | 200 | `E_BOOTING`（带 bootMs） | true |

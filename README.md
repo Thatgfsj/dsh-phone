@@ -53,7 +53,8 @@
 
 操作 Agent 无法使用浏览器 cookie，因此插件在 `$DSH_HOME/storages/dsh-phone/agent.json`（0600）
 写入 `{token, baseUrl}` 供其调用 `/dsh-phone/api/agent/config`：先 `POST /attach/verify` 验证端点（R5），
-再写 `attach.endpoint` 与 `attach.resolved`（R1 单键），最后 `GET /status` 复验（R4b）；插件卸载时删除
+再写 `attach.endpoint` 与 `attach.resolved`（R1 单键；Agent 通道**禁止**写 `attach.userHint`，R2），
+最后 `GET /status` 复验（R4b）；插件卸载时删除
 token 文件、重载轮换。候选路径/端口探测仍由 Agent 的 shell 完成，插件不扫盘。完整 curl 示例见
 [docs/host.md](docs/host.md) §5.1。
 

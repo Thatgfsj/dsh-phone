@@ -223,7 +223,7 @@ test('POST /config：userHint 非字符串 → 400（不能被映射成 503）',
   assert.equal(harness.settings.calls, 0)
 })
 
-test('本地 Agent 通道 /agent/config：token 鉴权通过时绕过 requestRejection 并写入', async () => {
+test('本地 Agent 通道 /agent/config：token 通过可写 endpoint/resolved，但禁止写 userHint（R2）', async () => {
   const harness = makeHarness()
   harness.connection = { requestRejection: () => 401 }
   harness.agentAuth = (req) =>
@@ -238,16 +238,43 @@ test('本地 Agent 通道 /agent/config：token 鉴权通过时绕过 requestRej
   assert.equal(response.statusCode, 401)
   assert.equal(json(response).error.code, 'E_AUTH')
 
-  // 带正确 token → 放行并写配置
+  // 带正确 token 但写 userHint → 403 E_FORBIDDEN，且不落盘（SPEC §6.2 R2）
   response = await invoke(harness, {
     method: 'POST',
     url: '/dsh-phone/api/agent/config',
     body: { path: ['attach', 'userHint'], value: '模拟器在 D:\\Android\\Sdk', revision: 5 },
     headers: { 'x-dsh-phone-token': 'good-token' },
   })
+  assert.equal(response.statusCode, 403)
+  assert.equal(json(response).error.code, 'E_FORBIDDEN')
+  assert.equal(harness.settings.calls, 0)
+
+  // 带正确 token 且已 verify → 可写 endpoint（R5 + R1）
+  await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/attach/verify',
+    body: { endpoint: '127.0.0.1:5555' },
+  })
+  response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/agent/config',
+    body: { path: ['attach', 'endpoint'], value: '127.0.0.1:5555', revision: 5 },
+    headers: { 'x-dsh-phone-token': 'good-token' },
+  })
   assert.equal(response.statusCode, 200)
-  assert.equal(json(response).value.attach.userHint, '模拟器在 D:\\Android\\Sdk')
+  assert.equal(json(response).value.attach.endpoint, '127.0.0.1:5555')
   assert.equal(harness.settings.calls, 1)
+})
+
+test('浏览器 POST /config 仍允许写 userHint（设置页需要；与 Agent 通道区分）', async () => {
+  const harness = makeHarness()
+  const response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/config',
+    body: { path: ['attach', 'userHint'], value: 'Android Studio 装的，SDK 默认路径', revision: 5 },
+  })
+  assert.equal(response.statusCode, 200)
+  assert.equal(json(response).value.attach.userHint, 'Android Studio 装的，SDK 默认路径')
 })
 
 test('本地 Agent 通道：agent/config 同样受 R5 约束（未 verify 写 endpoint → 409）', async () => {

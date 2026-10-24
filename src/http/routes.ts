@@ -149,7 +149,11 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
     sendSuccess(res, result)
   }
 
-  async function handleConfigWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function handleConfigWrite(
+    req: IncomingMessage,
+    res: ServerResponse,
+    options: { viaAgent?: boolean } = {},
+  ): Promise<void> {
     const body = asRecord(await readJsonBody(req))
     const rawPath = body.path
     if (
@@ -165,6 +169,14 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
         400,
         'E_BAD_PATH',
         '不允许写入 ' + pathKey(path) + '；只允许 attach.endpoint / attach.resolved / attach.userHint',
+      )
+    }
+    // SPEC §6.2 R2：userHint 原文只由用户在设置页修改；本地 Agent 通道禁止写。
+    if (options.viaAgent === true && pathKey(path) === 'attach.userHint') {
+      throw new ApiError(
+        403,
+        'E_FORBIDDEN',
+        '本地 Agent 通道不得修改 attach.userHint（SPEC §6.2 R2：一句话只由用户在设置页修改）',
       )
     }
     if (!('value' in body)) {
@@ -276,7 +288,7 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
         return
       }
       if (isAgentConfig) {
-        await handleConfigWrite(req, res)
+        await handleConfigWrite(req, res, { viaAgent: true })
         return
       }
       if (method === 'POST' && rawPath === '/attach/verify') {
