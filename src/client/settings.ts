@@ -8,7 +8,7 @@
  * SPEC §6.2: resetting is a user action only; the Agent never calls it.
  */
 import type * as ReactNamespace from 'react'
-import type { Translate } from './panel.ts'
+import type { Translate } from './i18n.ts'
 import { CLIENT_CSS } from './styles.ts'
 import { ConfigApiError, createFetchConfigApi, messageOf, readRunStatus, writeWithConflictRetry } from './settings-api.ts'
 import type { ConfigApi, PhoneConfigView, PhoneStatusView } from './settings-api.ts'
