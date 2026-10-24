@@ -66,7 +66,7 @@ test('Config：runtime 枚举严格（SPEC §6.1）', () => {
   for (const runtime of RUNTIME_VALUES) {
     assert.equal(Config({ runtime }).runtime, runtime)
   }
-  assert.throws(() => Config({ runtime: 'waydroid' }), /runtime/)
+  assert.throws(() => Config({ runtime: 'waydroid' as never }), /runtime/)
 })
 
 test('Config：显式覆盖 volatile 值后读取一致', () => {

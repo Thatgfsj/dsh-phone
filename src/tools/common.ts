@@ -21,7 +21,6 @@ export interface ToolFailure {
 export interface ToolSuccess {
   ok: true
   message?: string
-  data?: unknown
 }
 
 export type ToolResult = ToolSuccess | ToolFailure
@@ -37,11 +36,18 @@ export const RESULT_SCHEMA = {
     retryable: { type: 'boolean' },
     bootMs: { type: 'integer' },
     hints: { type: 'array', items: { type: 'string' } },
-    data: { type: 'json' },
   },
 } as const
 
-type Renderable = ToolResult
+/** render 的输入：成功/失败共用（避免 discriminated union 在泛型 schema 下不兼容）。 */
+export interface RenderableResult {
+  ok: boolean
+  code?: string
+  message?: string
+  retryable?: boolean
+  bootMs?: number
+  hints?: readonly string[]
+}
 
 /** ContentBlock 文本块（不 import dsh-llm，保持 host 工具层解耦）。 */
 export interface TextBlockLike {
@@ -49,7 +55,7 @@ export interface TextBlockLike {
   text: string
 }
 
-export function renderResult(value: Renderable): TextBlockLike[] {
+export function renderResult(value: RenderableResult): TextBlockLike[] {
   if (value.ok) {
     return [{ type: 'text', text: value.message ?? 'ok' }]
   }
@@ -111,7 +117,7 @@ export function failureFrom(error: unknown): ToolFailure {
 /** 工具执行骨架：前置 readiness → 动作 → 结构化结果。 */
 export async function guarded(
   service: PhoneOperations,
-  action: () => Promise<{ message?: string; data?: unknown } | void>,
+  action: () => Promise<{ message?: string } | void>,
 ): Promise<ToolResult> {
   let readiness
   try {
@@ -124,8 +130,7 @@ export async function guarded(
   try {
     const result = await action()
     const success: ToolSuccess = { ok: true }
-    if (result && 'message' in result && result.message !== undefined) success.message = result.message
-    if (result && 'data' in result && result.data !== undefined) success.data = result.data
+    if (result && result.message !== undefined) success.message = result.message
     return success
   } catch (error) {
     return failureFrom(error)

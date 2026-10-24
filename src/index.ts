@@ -8,6 +8,8 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { Duplex } from 'node:stream'
 
 import { Config as PhoneConfigSchema } from './config/schema.ts'
 import type { PhoneConfig } from './config/schema.ts'
@@ -16,9 +18,11 @@ import type { ConnectionLike } from './http/auth.ts'
 import { API_PREFIX, createApiHandler, createReadOnlyHandler } from './http/routes.ts'
 import type { ConfigView } from './http/routes.ts'
 import type { AttachmentsLike } from './phone/contracts.ts'
-import { createPhoneService } from './phone/wiring.ts'
 import type { PhoneService } from './phone/service.ts'
+import { createPhoneService } from './phone/wiring.ts'
+import type { StreamConnectionFence } from './stream/index.ts'
 import { createStreamUpgradeRoute } from './stream/index.ts'
+import type { ToolHostLike } from './tools/common.ts'
 import { registerPhoneTools } from './tools/index.ts'
 import { evaluateShellCommand } from './tools/shell-policy.ts'
 
@@ -29,6 +33,23 @@ export const inject = ['tools']
 
 /** SPEC §6.1 全量配置 schema。 */
 export const Config = PhoneConfigSchema
+
+/** ctx.webServer 的最小结构（类型来自 dsh-host-webserver 的 cordis 增强，本包不依赖它）。 */
+interface WebServerLike {
+  register(route: {
+    kind: 'prefix'
+    path: string
+    handler: (req: IncomingMessage, res: ServerResponse) => void
+  }): () => void
+  registerUpgrade(route: {
+    path: string
+    handler: (req: IncomingMessage, socket: Duplex, head: Buffer) => void
+  }): () => void
+}
+
+interface WebHostContext {
+  webServer: WebServerLike
+}
 
 function configView(config: PhoneConfig): ConfigView {
   return {
@@ -58,16 +79,30 @@ function registerShellApproval(ctx: Context): void {
   })
 }
 
+/** ctx 的结构适配（只为测试可注入的 ToolHostLike）。 */
+function toolHost(ctx: Context): ToolHostLike {
+  return {
+    tools: ctx.tools,
+    effect: (callback) => {
+      ctx.effect(() => {
+        const dispose = callback()
+        return typeof dispose === 'function' ? dispose : () => undefined
+      })
+    },
+  }
+}
+
 /** enabled=false：只注册设置页只读配置路由。 */
 function registerReadOnly(ctx: Context, config: PhoneConfig): void {
   ctx.inject(['webServer'], (webCtx) => {
+    const webServer = (webCtx as unknown as WebHostContext).webServer
     const handler = createReadOnlyHandler({
       getSettings: () => ctx.get('settings') as SettingsFacade | undefined,
       getConnection: () => ctx.get('connection') as ConnectionLike | undefined,
       getConfigView: () => configView(config),
     })
     webCtx.effect(() =>
-      webCtx.webServer.register({
+      webServer.register({
         kind: 'prefix',
         path: API_PREFIX,
         handler: (req, res) => void handler.handle(req, res),
@@ -86,18 +121,15 @@ export function apply(ctx: Context, config: PhoneConfig): void {
   const service: PhoneService = createPhoneService(config)
   ctx.effect(() => () => void service.dispose())
 
-  // 3) tools + 审批
-  ctx.effect(() => {
-    registerShellApproval(ctx)
-    registerPhoneTools(ctx, {
-      service,
-      attachments: () => ctx.get('attachments') as AttachmentsLike | undefined,
-    })
-    return () => undefined
-  })
+  // 3) tools + phone_shell 审批
+  const attachments = (): AttachmentsLike | undefined =>
+    ctx.get('attachments') as AttachmentsLike | undefined
+  registerShellApproval(ctx)
+  registerPhoneTools(toolHost(ctx), { service, attachments })
 
-  // 4) http + ws
+  // 4) http + ws（web carrier 可选：无 webServer 时插件仍提供工具）
   ctx.inject(['webServer'], (webCtx) => {
+    const webServer = (webCtx as unknown as WebHostContext).webServer
     const api = createApiHandler({
       service,
       getSettings: () => ctx.get('settings') as SettingsFacade | undefined,
@@ -109,25 +141,24 @@ export function apply(ctx: Context, config: PhoneConfig): void {
       },
     })
     webCtx.effect(() =>
-      webCtx.webServer.register({
+      webServer.register({
         kind: 'prefix',
         path: API_PREFIX,
         handler: (req, res) => void api.handle(req, res),
       }),
     )
 
-    webCtx.effect(() =>
-      webCtx.webServer.registerUpgrade(
-        createStreamUpgradeRoute({
-          service,
-          getConnection: () => ctx.get('connection') as ConnectionLike | undefined,
-          getStreamOptions: () => ({
-            maxSize: config.stream.maxSize,
-            maxFps: config.stream.maxFps,
-            bitrate: config.stream.bitrate,
-          }),
-        }),
-      ),
-    )
+    const fence = (): StreamConnectionFence | undefined =>
+      ctx.get('connection') as unknown as StreamConnectionFence | undefined
+    const route = createStreamUpgradeRoute({
+      service,
+      getConnection: fence,
+      getStreamOptions: () => ({
+        maxSize: config.stream.maxSize,
+        maxFps: config.stream.maxFps,
+        bitrate: config.stream.bitrate,
+      }),
+    })
+    webCtx.effect(() => webServer.registerUpgrade(route))
   })
 }

@@ -1,7 +1,6 @@
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
-import type { PhoneStatus } from '../phone/contracts.ts'
 import type { ToolDeps } from './common.ts'
 
 const STATUS_SCHEMA = {
@@ -27,7 +26,19 @@ const STATUS_SCHEMA = {
   },
 } as const
 
-function renderStatus(status: PhoneStatus): string {
+interface StatusLike {
+  state: string
+  runtime: string
+  platform: string
+  cpuPct?: number
+  memPct?: number
+  uptimeMs?: number
+  bootMs?: number
+  endpoint?: { host: string; port: number }
+  lastError?: string
+}
+
+function renderStatus(status: StatusLike): string {
   const parts = [`state=${status.state}`, `runtime=${status.runtime}`, `platform=${status.platform}`]
   if (status.state === 'booting' && status.bootMs !== undefined) parts.push(`bootMs=${status.bootMs}`)
   if (status.endpoint) parts.push(`endpoint=${status.endpoint.host}:${status.endpoint.port}`)

@@ -72,7 +72,7 @@ test('booting 中间态：不抛错，返回可重试 E_BOOTING + bootMs', async
   const service = makeService()
   service.setReadiness({ state: 'booting', bootMs: 4200 })
   const tap = createPhoneTools({ service }).find((d) => d.name === 'phone_tap')!
-  const value = await tap.execute({ x: 10, y: 20 }, {} as never)
+  const value = (await tap.execute({ x: 10, y: 20 }, {} as never)) as any
   assert.equal(value.ok, false)
   assert.equal(value.code, 'E_BOOTING')
   assert.equal(value.retryable, true)
@@ -101,11 +101,11 @@ test('tap/swipe/key/input_text/app_launch/dump/shell 正常路径调用 service'
   assert.ok(service.calls.includes('inputText:你好，世界'))
   assert.ok(service.calls.includes('appLaunch:com.android.settings'))
 
-  const dump = await byName.get('phone_uiautomator_dump')!.execute({}, {} as never)
+  const dump = (await byName.get('phone_uiautomator_dump')!.execute({}, {} as never)) as any
   assert.equal(dump.ok, true)
   assert.match(dump.message as string, /<hierarchy>/)
 
-  const shell = await byName.get('phone_shell')!.execute({ cmd: 'getprop ro.product.model' }, {} as never)
+  const shell = (await byName.get('phone_shell')!.execute({ cmd: 'getprop ro.product.model' }, {} as never)) as any
   assert.equal(shell.ok, true)
   assert.equal(shell.message, 'model=TestPhone')
 })
@@ -118,7 +118,7 @@ test('错误映射：runtime unavailable → E_RUNTIME_UNAVAILABLE + 安装指�
   })
   service.failOn('ensureInteractive', error)
   const tap = createPhoneTools({ service }).find((d) => d.name === 'phone_tap')!
-  const value = await tap.execute({ x: 1, y: 1 }, {} as never)
+  const value = (await tap.execute({ x: 1, y: 1 }, {} as never)) as any
   assert.equal(value.code, 'E_RUNTIME_UNAVAILABLE')
   assert.equal(value.retryable, false)
   assert.match((value.hints ?? []).join('\n'), /Docker/)
@@ -130,7 +130,7 @@ test('phone_screenshot：有 attachments 输出 image block，渲染 text+image'
   const tool = createPhoneTools({ service, attachments: () => attachments }).find(
     (d) => d.name === 'phone_screenshot',
   )!
-  const value = await tool.execute({}, {} as never)
+  const value = (await tool.execute({}, {} as never)) as any
   assert.equal(value.ok, true)
   assert.equal(value.image.attachmentId, 'att-1')
   assert.equal(value.image.width, 720)
@@ -143,7 +143,7 @@ test('phone_screenshot：有 attachments 输出 image block，渲染 text+image'
 test('phone_screenshot：无 attachments 或保存失败时降级文本、不整体失败', async () => {
   const service = makeService()
   const noService = createPhoneTools({ service }).find((d) => d.name === 'phone_screenshot')!
-  const value = await noService.execute({}, {} as never)
+  const value = (await noService.execute({}, {} as never)) as any
   assert.equal(value.ok, true)
   assert.equal(value.image, undefined)
   assert.equal(value.fallback.bytes, 7)
@@ -153,7 +153,7 @@ test('phone_screenshot：无 attachments 或保存失败时降级文本、不整
   const withFailing = createPhoneTools({ service, attachments: () => failing }).find(
     (d) => d.name === 'phone_screenshot',
   )!
-  const fallbackValue = await withFailing.execute({}, {} as never)
+  const fallbackValue = (await withFailing.execute({}, {} as never)) as any
   assert.equal(fallbackValue.ok, true)
   assert.equal(fallbackValue.image, undefined)
 })

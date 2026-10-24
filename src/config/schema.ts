@@ -81,7 +81,7 @@ export const Config = z.object({
 })
 
 /** 校验后的配置类型（volatile 叶子在运行时是 `{ get(): T }`）。 */
-export type PhoneConfig = z.infer<typeof Config>
+export type PhoneConfig = ReturnType<typeof Config>
 
 /** 配置命名空间 = profile 行 id（package.json name）。 */
 export const CONFIG_NS = 'dsh-phone'

@@ -10,7 +10,7 @@
  */
 import { AdbDevice } from '../adb/device.ts'
 import { connect, disconnect } from '../adb/transport.ts'
-import type { AdbConnection } from '../adb/transport.ts'
+import type { AdbConnection } from '../adb/types.ts'
 import type { PhoneConfig } from '../config/schema.ts'
 import { createCommandRunner } from '../runtime/command.ts'
 import { resolveRuntime } from '../runtime/detect.ts'

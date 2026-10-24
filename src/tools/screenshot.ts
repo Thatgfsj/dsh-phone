@@ -56,13 +56,17 @@ export function createScreenshotTool(deps: ToolDeps): ToolDefinition {
     output: {
       schema: SCREENSHOT_SCHEMA,
       render: (_args, value) => {
+        const message = value.message ?? 'screenshot'
         if (value.image) {
           return [
-            { type: 'text', text: value.message },
-            { type: 'image', attachment: value.image },
+            { type: 'text', text: message },
+            {
+              type: 'image',
+              attachment: { ...value.image, mediaType: value.image.mediaType as 'image/png' },
+            },
           ]
         }
-        return [{ type: 'text', text: value.message }]
+        return [{ type: 'text', text: message }]
       },
     },
     async execute(): Promise<ScreenshotValue> {

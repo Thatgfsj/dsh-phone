@@ -99,7 +99,7 @@ export interface LifecycleLike {
 
 export type CreateLifecycle = (
   hooks: LifecycleHooksLike,
-  timings: { idleTimeoutMs: number; pausedTimeoutMs: number; bootTimeoutMs?: number },
+  timings: { idleTimeoutMs: number; pausedTimeoutMs: number; bootTimeoutMs: number },
 ) => LifecycleLike
 
 export interface PhoneServiceDeps {
