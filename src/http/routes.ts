@@ -35,6 +35,8 @@ import { ApiError, readJsonBody, sendError, sendJson, sendPng, sendSuccess } fro
 export const API_PREFIX = '/dsh-phone/api'
 
 export interface ConfigView {
+  /** 插件总开关（Config.enabled，非 volatile；只读展示，变更需重载）。 */
+  enabled: boolean
   runtime: string
   /** 首次使用守卫状态（issue #30）；面板据此决定是否展示引导。 */
   onboarding: OnboardingState
@@ -42,6 +44,8 @@ export interface ConfigView {
 }
 
 export interface ConfigSnapshot {
+  /** 插件总开关（只读；客户端据此显示「已启用/已关闭（只读）」）。 */
+  enabled: boolean
   runtime: string
   onboarding: OnboardingState
   attach: { endpoint: string; userHint: string; resolved: boolean }
@@ -90,6 +94,7 @@ function configSnapshot(deps: SnapshotSource): ConfigSnapshot {
   const view = deps.getConfigView()
   const onboarding = (readPath(descriptor.value, ['onboarding']) ?? {}) as Record<string, unknown>
   return {
+    enabled: view.enabled === true,
     runtime: view.runtime,
     onboarding: {
       status: isOnboardingStatus(onboarding.status) ? onboarding.status : view.onboarding.status,

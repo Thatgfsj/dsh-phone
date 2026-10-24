@@ -169,7 +169,7 @@ adapter 不可用失效、启动失败立即重探。
 | 方法/路径 | 行为 |
 |---|---|
 | GET `/status` | onboarding pending/declined → 200 `{ok:false,error:{code:'E_ONBOARDING_*',...}}`（不碰设备）；accepted → `service.status()`；no-store |
-| GET `/config` | `{runtime, onboarding:{status,choice}, attach:{endpoint,userHint,resolved}, stream:{maxSize,maxFps,bitrate}, revision}`；revision 来自 settings.describe（缺失 settings → 503 E_NO_WEB） |
+| GET `/config` | `{enabled, runtime, onboarding:{status,choice}, attach:{endpoint,userHint,resolved}, stream:{maxSize,maxFps,bitrate}, revision}`；`enabled` 来自 Config.enabled（只读、非 volatile，变更需重载）；主 handler 与 enabled=false 的只读 handler 形状一致；revision 来自 settings.describe（缺失 settings → 503 E_NO_WEB） |
 | POST `/config` | body `{path:string[], value, revision?}`；只允许五键（attach 三键 + onboarding 两键）；R5 检查；写后回读 + 复验；成功返回同上 snapshot |
 | POST `/attach/verify` | body `{endpoint}`；adb connect(timeout 3000) + `getprop ro.product.model`；成功 200 `{ok:true,latencyMs,banner}`，失败 200 `{ok:false,latencyMs,error}`；不落盘 |
 | GET `/screenshot` | `image/png` + no-store；onboarding pending/declined → 200 JSON `E_ONBOARDING_*`；booting → 200 JSON `E_BOOTING`（error.bootMs） |
