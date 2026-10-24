@@ -11,6 +11,8 @@
 import { AdbDevice } from '../adb/device.ts'
 import { connect, disconnect } from '../adb/transport.ts'
 import type { AdbConnection } from '../adb/types.ts'
+import { effectiveRuntime } from '../config/onboarding.ts'
+import type { OnboardingState } from '../config/onboarding.ts'
 import type { PhoneConfig } from '../config/schema.ts'
 import { createCommandRunner } from '../runtime/command.ts'
 import { resolveRuntime } from '../runtime/detect.ts'
@@ -22,10 +24,19 @@ import type { ServiceConfig, StreamSession, StreamSessionOptions } from './servi
 import { PhoneLifecycle } from './state.ts'
 import { PhoneService } from './service.ts'
 
-/** 把 volatile 配置（.get()）实时投影成 PhoneService 读的纯值快照。 */
+/** 实时读取 onboarding 状态（两个 volatile 叶子）。 */
+export function readOnboarding(config: PhoneConfig): OnboardingState {
+  return { status: config.onboarding.status.get(), choice: config.onboarding.choice.get() }
+}
+
+/**
+ * 把 volatile 配置（.get()）实时投影成 PhoneService 读的纯值快照。
+ * onboarding accepted + choice 非空时，等价显式 `runtime=choice`（issue #30）。
+ */
 export function readServiceConfig(config: PhoneConfig): ServiceConfig {
+  const onboarding = readOnboarding(config)
   return {
-    runtime: config.runtime,
+    runtime: effectiveRuntime(config.runtime, onboarding),
     attach: {
       endpoint: config.attach.endpoint.get(),
       userHint: config.attach.userHint.get(),

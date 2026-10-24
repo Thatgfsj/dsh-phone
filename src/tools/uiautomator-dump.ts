@@ -12,7 +12,7 @@ export function createDumpTool(deps: ToolDeps): ToolDefinition {
     parameters: {},
     output: { schema: RESULT_SCHEMA, render: (_args, value) => renderResult(value) },
     execute() {
-      return guarded(deps.service, async () => {
+      return guarded(deps, async () => {
         const xml = await deps.service.dumpUi()
         return { message: xml }
       })
