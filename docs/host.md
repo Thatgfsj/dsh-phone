@@ -143,6 +143,8 @@ activity/window/display/battery/cpuinfo/meminfo/gfxinfo/input/power/wifi。
 - 鉴权：**同时满足** ① `req.socket.remoteAddress` 为 loopback（127/8、::1、::ffff:127/8）；
   ② 无 `Origin` 头；③ `x-dsh-phone-token` 与文件 token 常量时间相等。任一不满足则回退
   `ctx.connection.requestRejection` 的原有校验；token 错误且无同源 cookie → 401 `E_AUTH`。
+  该通道适用于 Agent 闭环的三条路由：`POST /attach/verify`（R5）、`POST /agent/config`（R1/R4）、
+  `GET /status`（R4b）；screenshot 走 `phone_screenshot` 工具而非 HTTP。
 - R5/R4 不因通道变化：未 verify 的 endpoint 仍 409 `E_NOT_VERIFIED`；写后仍 describe 回读 + phone_status 复验。
 - **R2 收口**：`/agent/config` **禁止写 `attach.userHint`**（返回 403 `E_FORBIDDEN`，不落盘）——
   一句话原文只由用户在设置页修改；浏览器 `POST /config` 仍允许写 userHint。

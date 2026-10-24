@@ -249,12 +249,23 @@ test('本地 Agent 通道 /agent/config：token 通过可写 endpoint/resolved�
   assert.equal(json(response).error.code, 'E_FORBIDDEN')
   assert.equal(harness.settings.calls, 0)
 
-  // 带正确 token 且已 verify → 可写 endpoint（R5 + R1）
-  await invoke(harness, {
+  // verify 无 token → 仍 401；带 token → 可验证（R5）
+  let verifyResponse = await invoke(harness, {
     method: 'POST',
     url: '/dsh-phone/api/attach/verify',
     body: { endpoint: '127.0.0.1:5555' },
   })
+  assert.equal(verifyResponse.statusCode, 401)
+  verifyResponse = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/attach/verify',
+    body: { endpoint: '127.0.0.1:5555' },
+    headers: { 'x-dsh-phone-token': 'good-token' },
+  })
+  assert.equal(verifyResponse.statusCode, 200)
+  assert.equal(json(verifyResponse).value.ok, true)
+
+  // 带正确 token 且已 verify → 可写 endpoint（R5 + R1）
   response = await invoke(harness, {
     method: 'POST',
     url: '/dsh-phone/api/agent/config',
@@ -264,6 +275,15 @@ test('本地 Agent 通道 /agent/config：token 通过可写 endpoint/resolved�
   assert.equal(response.statusCode, 200)
   assert.equal(json(response).value.attach.endpoint, '127.0.0.1:5555')
   assert.equal(harness.settings.calls, 1)
+
+  // GET /status 也允许 Agent token（R4b 复验）
+  const statusResponse = await invoke(harness, {
+    method: 'GET',
+    url: '/dsh-phone/api/status',
+    headers: { 'x-dsh-phone-token': 'good-token' },
+  })
+  assert.equal(statusResponse.statusCode, 200)
+  assert.equal(json(statusResponse).value.state, 'running')
 })
 
 test('浏览器 POST /config 仍允许写 userHint（设置页需要；与 Agent 通道区分）', async () => {

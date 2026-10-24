@@ -263,10 +263,15 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
         : url.pathname
       const method = (req.method ?? 'GET').toUpperCase()
       const isAgentConfig = method === 'POST' && rawPath === '/agent/config'
+      // 无浏览器 cookie 的 Agent 需要走：verify（R5）→ agent/config（R1）→ status（R4b）
+      const agentEligible =
+        isAgentConfig ||
+        (method === 'POST' && rawPath === '/attach/verify') ||
+        (method === 'GET' && rawPath === '/status')
 
       const rejection = rejectionFor(deps.getConnection(), req)
       if (rejection) {
-        const agentOk = isAgentConfig && deps.agentAuth !== undefined
+        const agentOk = agentEligible && deps.agentAuth !== undefined
           ? await deps.agentAuth(req)
           : false
         if (!agentOk) {
