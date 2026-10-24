@@ -41,6 +41,8 @@ export interface StreamClientOptions {
   onFrame: (frame: ParsedVideoFrame) => void
   onMessage: (message: ServerMessage) => void
   onState: (state: StreamState) => void
+  /** Non-retryable terminal failures (e.g. the auth close code 1008). */
+  onError?: (error: { code: string; message: string; retryable: boolean }) => void
   /** Socket factory; defaults to the browser WebSocket. */
   createSocket?: (url: string) => SocketLike
   /** Override for tests / alternate origins. */
@@ -190,12 +192,18 @@ export class StreamClient {
     socket.onerror = () => {
       /* a close event follows; backoff is handled there */
     }
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (this.#socket === socket) this.#socket = undefined
       this.#clearTimerHandle(this.#heartbeat)
       this.#heartbeat = undefined
       if (this.#disposed) {
         this.#setState('closed')
+        return
+      }
+      if (event?.code === 1008) {
+        // docs/protocol.md §3: E_AUTH/E_ORIGIN are not retryable.
+        this.#setState('closed')
+        this.#options.onError?.({ code: 'E_AUTH', message: 'unauthorized', retryable: false })
         return
       }
       if (!this.#visible) {

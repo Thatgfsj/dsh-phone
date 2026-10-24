@@ -393,3 +393,28 @@ test('StreamClient: dispose stops reconnection for good', () => {
   clock.advance(60_000)
   assert.equal(FakeSocket.instances.length, 1)
 })
+
+test('StreamClient: auth close 1008 is terminal, reported and never retried', () => {
+  FakeSocket.instances.length = 0
+  const clock = new FakeClock()
+  const errors: { code: string; retryable: boolean }[] = []
+  const client = new StreamClient({
+    createSocket: (url) => new FakeSocket(url),
+    now: () => clock.now,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    onFrame: () => {},
+    onMessage: () => {},
+    onState: () => {},
+    onError: (failure) => errors.push({ code: failure.code, retryable: failure.retryable }),
+  })
+  client.start(true)
+  const socket = FakeSocket.at(0)
+  socket.open()
+  socket.shutdown(1008)
+  assert.equal(client.state, 'closed')
+  assert.deepEqual(errors, [{ code: 'E_AUTH', retryable: false }])
+  clock.advance(60_000)
+  assert.equal(FakeSocket.instances.length, 1, 'no reconnect after an auth rejection')
+})
+

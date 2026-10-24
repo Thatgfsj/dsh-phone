@@ -112,6 +112,10 @@ export function createPhonePanel(deps: PanelDeps): ReactNamespace.ComponentType 
           }
         },
         onState: (state) => setStatus(state),
+        onError: (failure) =>
+          setError(
+            failure.code === 'E_AUTH' ? t('panel.error.auth') : t('panel.error.stream', { message: failure.message }),
+          ),
       })
       clientRef.current = client
 
