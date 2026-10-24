@@ -63,6 +63,22 @@
 
 端口/容器名等默认值：`DEFAULT_RUBUNTIME_OPTIONS`（`src/runtime/types.ts`）。
 
+### 3.1 探测缓存与失效（Host 侧，issue #36）
+
+runtime 层本身**无状态**：`detectRuntime` / `resolveRuntime` 每次调用都重新探测、不缓存。
+缓存由 Host 的 `PhoneService` 负责（`src/phone/service.ts`），语义：
+
+- 成功 `RuntimeHandle` 缓存，status/工具复用；
+- **失败不永久缓存**：错误保留 30s（`RUNTIME_PROBE_RETRY_MS`）最短重探间隔，窗口后下一次
+  status/工具调用重新探测 → 用户装好 emulator/AVD 或启动 Docker 后**无需重载插件**；
+- `runtime` 配置或 `onboarding.status/choice` 变化立即失效（volatile 热更新）；
+- adapter 不可用（`status()` 报 `running=false && paused=false` 且生命周期 stopped）、
+  ADB 断连、`start`/`resume` 失败 → 丢弃 handle，下一次调用重探；
+- 生命周期状态事件只广播状态，不触发探测（防探测风暴）。
+
+因此 runtime 适配器实现不需要也不应该自己缓存探测结果；重复探测的成本由 Host 的
+30s 防抖与配置指纹控制。
+
 ## 4. 生命周期状态机
 
 - 状态：`stopped → booting → running → paused → stopped`；`booting` 是可观测中间态，

@@ -10,6 +10,7 @@
  *   control-only 会话），**绝不使用 shell input text**（SPEC §4）；
  * - 所有配置实时从 `deps.config()` 读，不缓存快照（architecture §6）。
  */
+import type { OnboardingChoice, OnboardingStatus } from '../config/onboarding.ts'
 import type { Endpoint, PhoneState, RuntimeAdapter, RuntimeKind } from '../runtime/types.ts'
 import type {
   InteractiveReadiness,
@@ -20,7 +21,10 @@ import type {
 } from './contracts.ts'
 
 export interface ServiceConfig {
+  /** 生效运行时（已叠加 onboarding.choice；wiring.readServiceConfig）。 */
   runtime: 'auto' | RuntimeKind
+  /** onboarding 原始状态：用于配置变化时使探测缓存失效（issue #36）。 */
+  onboarding?: { status: OnboardingStatus; choice: OnboardingChoice }
   attach: { endpoint: string; userHint: string; resolved: boolean }
   stream: { maxSize: number; maxFps: number; bitrate: number }
   lifecycle: { idleTimeoutMs: number; pausedTimeoutMs: number }
@@ -113,10 +117,24 @@ export interface PhoneServiceDeps {
   createLifecycle: CreateLifecycle
   /** 流关闭宽限期（默认 5000ms；测试注入立即执行）。 */
   schedule?(callback: () => void, delayMs: number): () => void
+  /** 可注入时钟（单测验证 30s 防抖；默认 Date.now）。 */
+  now?(): number
 }
 
 const DEFAULT_BOOT_TIMEOUT_MS = 120_000
 const DEFAULT_STREAM_GRACE_MS = 5_000
+
+/**
+ * 探测失败后的最短重探间隔（issue #36）：失败**不永久缓存**，但 30s 内不重复探测，
+ * 避免面板/status 轮询打爆决策树（docker/emulator 探测含磁盘与端口检查）。
+ */
+export const RUNTIME_PROBE_RETRY_MS = 30_000
+
+/** 运行时探测缓存指纹：runtime 配置 + onboarding.status/choice 任一变化即失效。 */
+export function runtimeConfigFingerprint(config: ServiceConfig): string {
+  const onboarding = config.onboarding
+  return [config.runtime, onboarding?.status ?? '', onboarding?.choice ?? ''].join('|')
+}
 
 function parseEndpoint(value: string): Endpoint | undefined {
   const match = /^([A-Za-z0-9._:[\]-]+):(\d{1,5})$/.exec(value.trim())
@@ -137,6 +155,10 @@ export class PhoneService implements PhoneOperations {
   #platform: Platform = 'other'
   #handle: RuntimeHandle | undefined
   #handleError: Error | undefined
+  /** 失败时间戳（用于 RUNTIME_PROBE_RETRY_MS 防抖）。 */
+  #handleErrorAt = 0
+  #configFingerprint: string | undefined
+  readonly #now: () => number
   #connection: AdbConnectionLike | undefined
   #device: DeviceOps | undefined
   #stream: StreamSession | undefined
@@ -150,7 +172,9 @@ export class PhoneService implements PhoneOperations {
 
   constructor(deps: PhoneServiceDeps) {
     this.#deps = deps
+    this.#now = deps.now ?? (() => Date.now())
     const config = deps.config()
+    this.#configFingerprint = runtimeConfigFingerprint(config)
     this.#lifecycle = deps.createLifecycle(
       {
         start: () => this.#start(),
@@ -179,6 +203,7 @@ export class PhoneService implements PhoneOperations {
   async status(): Promise<PhoneStatus> {
     const handle = await this.#runtime()
     const runtimeStatus = await handle.adapter.status().catch(() => undefined)
+    this.#invalidateIfAdapterUnavailable(handle, runtimeStatus)
     const config = this.#deps.config()
     const lifecycle = this.#lifecycle.status
     const endpoint =
@@ -388,9 +413,16 @@ export class PhoneService implements PhoneOperations {
   }
 
   #onLifecycleError(error: Error, phase: string): void {
-    this.#handleError = error
+    if (phase === 'start' || phase === 'resume') {
+      // 启动/唤醒失败：adapter 可能已不可用，丢弃 handle 让下一次调用重新探测；
+      // 探测本身失败的错误由 #runtime 缓存（30s 防抖），这里不再覆盖。
+      this.#dropHandle()
+      void this.#disconnectAdb()
+    } else {
+      this.#handleError = error
+      this.#handleErrorAt = this.#now()
+    }
     this.#emitStatus()
-    if (phase === 'start' || phase === 'resume') void this.#disconnectAdb()
   }
 
   async #attachAdb(endpoint: Endpoint): Promise<void> {
@@ -404,6 +436,8 @@ export class PhoneService implements PhoneOperations {
         this.#connection = undefined
         this.#device = undefined
         void this.#closeSessions()
+        // issue #36：ADB 断连视为 adapter 不可用，丢弃探测缓存，下次调用重探
+        this.#dropHandle()
         this.#lifecycle.notifyDisconnected('ADB 连接已断开')
         this.#emitStatus()
       },
@@ -418,18 +452,65 @@ export class PhoneService implements PhoneOperations {
     if (connection) await this.#deps.disconnect(connection).catch(() => undefined)
   }
 
+  /**
+   * 解析运行时（issue #36 缓存语义）：
+   * - 成功 handle 缓存；
+   * - 失败不永久缓存：错误保留 `RUNTIME_PROBE_RETRY_MS` 作为最短重探间隔，到期后重探；
+   * - runtime / onboarding.status/choice 变化立即失效（volatile 热更新路径）。
+   */
   async #runtime(): Promise<RuntimeHandle> {
+    this.#invalidateOnConfigChange()
     if (this.#handle) return this.#handle
-    if (this.#handleError) throw this.#handleError
+    if (this.#handleError !== undefined) {
+      if (this.#now() - this.#handleErrorAt < RUNTIME_PROBE_RETRY_MS) {
+        throw this.#handleError
+      }
+      this.#handleError = undefined
+      this.#handleErrorAt = 0
+    }
     try {
       const handle = await this.#deps.resolveRuntime()
       this.#handle = handle
+      this.#handleError = undefined
+      this.#handleErrorAt = 0
+      this.#configFingerprint = runtimeConfigFingerprint(this.#deps.config())
       this.#platform = handle.detection.platform
       return handle
     } catch (error) {
       this.#handleError = toError(error)
+      this.#handleErrorAt = this.#now()
       throw error
     }
+  }
+
+  /** 配置变化（runtime 或 onboarding 两叶）→ 丢弃成功 handle 与失败缓存。 */
+  #invalidateOnConfigChange(): void {
+    const fingerprint = runtimeConfigFingerprint(this.#deps.config())
+    if (this.#configFingerprint === fingerprint) return
+    this.#configFingerprint = fingerprint
+    this.#handle = undefined
+    this.#handleError = undefined
+    this.#handleErrorAt = 0
+  }
+
+  /** 丢弃成功 handle（保留失败缓存，以免防抖被绕过）。 */
+  #dropHandle(): void {
+    this.#handle = undefined
+    this.#configFingerprint = runtimeConfigFingerprint(this.#deps.config())
+  }
+
+  /**
+   * adapter 明确不可用（未运行且未 paused）且生命周期已回到 stopped 时，
+   * 失效成功 handle，下一次 status/工具调用重新探测。
+   */
+  #invalidateIfAdapterUnavailable(
+    handle: RuntimeHandle,
+    runtimeStatus: { running: boolean; paused: boolean } | undefined,
+  ): void {
+    if (runtimeStatus === undefined) return
+    if (runtimeStatus.running || runtimeStatus.paused) return
+    if (this.#lifecycle.state !== 'stopped') return
+    if (this.#handle === handle) this.#dropHandle()
   }
 
   #requireConnection(): AdbConnectionLike {
@@ -501,12 +582,13 @@ export class PhoneService implements PhoneOperations {
     return next
   }
 
+  /**
+   * 生命周期变更只做状态广播，**不在这里触发运行时探测**（issue #36）：
+   * 否则启动失败后的 stopped 事件会立刻重探，绕过 30s 防抖并造成探测风暴。
+   */
   #emit(status: LifecycleStatusLike): void {
-    void this.#runtime().then(
-      (handle) => this.#emitStatusWith(handle),
-      () => this.#emitStatus(),
-    )
     void status
+    this.#emitStatus()
   }
 
   #emitStatus(): void {

@@ -136,6 +136,24 @@ activity/window/display/battery/cpuinfo/meminfo/gfxinfo/input/power/wifi。
 - **资源**：`dispose()` 逆序关流→断 ADB→释放生命周期；`ctx.effect` 保证卸载回收。
 - **配置实时读**：每次从 `deps.config()` 读 volatile 最新值（`.get()`），不缓存快照。
 
+### 4.1 运行时探测缓存（issue #36）
+
+`resolveRuntime()`（决策树探测）结果由 PhoneService 管理，语义：
+
+| 情形 | 行为 |
+|---|---|
+| 探测成功 | `RuntimeHandle` 缓存；后续 status/工具复用，不重复探测 |
+| 探测失败 | **不永久缓存**：错误保留 `RUNTIME_PROBE_RETRY_MS = 30s` 作为最短重探间隔；窗口内 status/工具立即失败（防抖，避免面板轮询打爆 docker/emulator 探测），窗口后下一次调用重新探测 |
+| `runtime` / `onboarding.status` / `onboarding.choice` 变化 | 立即丢弃成功 handle 与失败缓存（volatile 热更新路径，无需重载插件） |
+| adapter 报告 `running=false && paused=false` 且生命周期为 `stopped` | 丢弃 handle，下一次调用重探 |
+| ADB 断连（`AdbConnection.disconnected`） | 丢弃 handle，下一次调用重探 |
+| `start`/`resume` 失败 | 丢弃 handle（adapter 视为不可用）；不写 30s 失败缓存，下一次调用立即重探 |
+| 生命周期状态事件 | 只广播 `PhoneStatus`，**不触发探测**（否则启动失败→stopped 事件会绕过防抖造成探测风暴） |
+
+配置指纹 = `runtime|onboarding.status|onboarding.choice`（`runtimeConfigFingerprint`）。
+单测覆盖：失败→TTL→成功（不重建 service）、30s 内防抖、status 重探、配置变化立即失效、
+adapter 不可用失效、启动失败立即重探。
+
 ## 5. HTTP 路由（docs/protocol.md 冻结）
 
 前缀 `/dsh-phone/api`，所有请求先 `ctx.connection.requestRejection(req)`：

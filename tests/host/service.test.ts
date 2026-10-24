@@ -64,7 +64,15 @@ function makeLifecycle(initial: LifecycleStatusLike['state'] = 'stopped', manual
       }
       status = { state: 'booting', since: 0 }
       if (!manualBoot) {
-        await lifecycle.hooks.start()
+        try {
+          await lifecycle.hooks.start()
+        } catch (error) {
+          const failure = error instanceof Error ? error : new Error(String(error))
+          lifecycle.hooks.onError?.(failure, 'start')
+          status = { state: 'stopped', since: 0, lastError: failure.message }
+          for (const listener of listeners) listener(status)
+          throw failure
+        }
         booted = true
         status = { state: 'running', since: 1, bootMs: 42 }
         for (const listener of listeners) listener(status)
@@ -397,4 +405,178 @@ test('dispose：关流、断 ADB、释放生命周期（幂等）', async () => 
   assert.ok(harness.disconnected >= 1)
   await harness.service.dispose()
   assert.equal(harness.closeCount, 1)
+})
+/* ------------------------- 运行时探测缓存（issue #36） ------------------------- */
+
+function makeHandle(
+  kind: 'attach' | 'emulator' | 'redroid',
+  options: {
+    ensureRunning?: () => Promise<{ host: string; port: number }>
+    status?: () => Promise<{ kind: 'attach' | 'emulator' | 'redroid'; running: boolean; paused: boolean; endpoint?: { host: string; port: number } }>
+  } = {},
+): RuntimeHandle {
+  const endpoint = { host: '127.0.0.1', port: 5555 }
+  return {
+    adapter: {
+      kind,
+      probe: async () => ({ ok: true }),
+      ensureRunning: options.ensureRunning ?? (async () => endpoint),
+      pause: async () => {},
+      resume: async () => {},
+      stop: async () => {},
+      status:
+        options.status ??
+        (async () => ({ kind, running: true, paused: false, endpoint })),
+    },
+    detection: { kind, platform: 'linux' },
+  }
+}
+
+test('探测失败不永久缓存：30s 后重新探测成功（不重建 service、无需重载插件）', async () => {
+  let now = 1_000_000
+  let available = false
+  let resolveCalls = 0
+  const harness = makeService({
+    now: () => now,
+    resolveRuntime: async () => {
+      resolveCalls += 1
+      if (!available) {
+        throw Object.assign(new Error('没有可用的 Android 运行时'), { code: 'unavailable' })
+      }
+      return makeHandle('attach')
+    },
+  })
+
+  await assert.rejects(harness.service.ensureRunning(), /没有可用的 Android 运行时/)
+  assert.equal(resolveCalls, 1)
+
+  // 环境变可用，但仍在 30s 防抖窗口内 → 不重复探测
+  available = true
+  await assert.rejects(harness.service.ensureRunning(), /没有可用的 Android 运行时/)
+  assert.equal(resolveCalls, 1)
+
+  // 超过 TTL → 下一次调用重新探测并成功
+  now += 30_000
+  await harness.service.ensureRunning()
+  assert.equal(resolveCalls, 2)
+  assert.equal(harness.lifecycle.state, 'running')
+})
+
+test('探测失败防抖：TTL 内多次 status/工具调用不产生探测风暴', async () => {
+  let now = 2_000_000
+  let resolveCalls = 0
+  const harness = makeService({
+    now: () => now,
+    resolveRuntime: async () => {
+      resolveCalls += 1
+      throw Object.assign(new Error('三路全不可用'), { code: 'unavailable' })
+    },
+  })
+  for (let index = 0; index < 5; index += 1) {
+    await assert.rejects(harness.service.status(), /三路全不可用/)
+    now += 1_000
+  }
+  assert.equal(resolveCalls, 1)
+})
+
+test('status 在探测失败后按 TTL 重探并返回新 runtime', async () => {
+  let now = 3_000_000
+  let available = false
+  let resolveCalls = 0
+  const harness = makeService({
+    now: () => now,
+    resolveRuntime: async () => {
+      resolveCalls += 1
+      if (!available) throw Object.assign(new Error('三路全不可用'), { code: 'unavailable' })
+      return makeHandle('emulator')
+    },
+  })
+  await assert.rejects(harness.service.status(), /三路全不可用/)
+  assert.equal(resolveCalls, 1)
+
+  available = true
+  now += 30_000
+  const status = await harness.service.status()
+  assert.equal(resolveCalls, 2)
+  assert.equal(status.runtime, 'emulator')
+  assert.equal(status.platform, 'linux')
+})
+
+test('配置变化（onboarding.choice / runtime）立即使缓存失效并重探', async () => {
+  let resolveCalls = 0
+  const config = makeConfig({ runtime: 'attach' })
+  const harness = makeService({
+    config: () => config,
+    resolveRuntime: async () => {
+      resolveCalls += 1
+      return makeHandle(config.onboarding?.choice === 'emulator' ? 'emulator' : 'attach')
+    },
+  })
+
+  const first = await harness.service.status()
+  assert.equal(first.runtime, 'attach')
+  assert.equal(resolveCalls, 1)
+
+  // volatile 热更新：onboarding.choice 变化 → 下一次 status 立即重探
+  config.onboarding = { status: 'accepted', choice: 'emulator' }
+  const second = await harness.service.status()
+  assert.equal(resolveCalls, 2)
+  assert.equal(second.runtime, 'emulator')
+
+  // runtime 配置变化同样失效
+  config.runtime = 'auto'
+  await harness.service.status()
+  assert.equal(resolveCalls, 3)
+})
+
+test('adapter 不可用（未运行/未 paused 且 stopped）→ handle 失效，下次调用重探', async () => {
+  let resolveCalls = 0
+  const harness = makeService({
+    resolveRuntime: async () => {
+      resolveCalls += 1
+      return makeHandle('attach', {
+        status: async () => ({
+          kind: 'attach',
+          running: false,
+          paused: false,
+          endpoint: { host: '127.0.0.1', port: 5555 },
+        }),
+      })
+    },
+  })
+  await harness.service.ensureRunning()
+  assert.equal(resolveCalls, 1)
+
+  // 生命周期回到 stopped 且 adapter 不可用 → status 内部失效 handle
+  harness.lifecycle.emit('stopped')
+  await harness.service.status()
+  assert.equal(resolveCalls, 1)
+
+  // 下一次调用重新探测
+  await harness.service.status()
+  assert.equal(resolveCalls, 2)
+})
+
+test('启动失败丢弃 handle：下一次 ensureRunning 立即重探（不受 30s 探测防抖限制）', async () => {
+  let resolveCalls = 0
+  let startFails = true
+  const harness = makeService({
+    resolveRuntime: async () => {
+      resolveCalls += 1
+      return makeHandle('attach', {
+        ensureRunning: async () => {
+          if (startFails) throw Object.assign(new Error('attach 端点不可达'), { code: 'start' })
+          return { host: '127.0.0.1', port: 5555 }
+        },
+      })
+    },
+  })
+
+  await assert.rejects(harness.service.ensureRunning(), /attach 端点不可达/)
+  assert.equal(resolveCalls, 1)
+
+  startFails = false
+  await harness.service.ensureRunning()
+  assert.equal(resolveCalls, 2)
+  assert.equal(harness.lifecycle.state, 'running')
 })
