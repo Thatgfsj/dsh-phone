@@ -143,6 +143,13 @@ export interface PhoneServiceDeps {
   sleep?(delayMs: number): Promise<void>
   /** 注入 boot 重试延迟序列（默认 bootRetryDelays(DEFAULT_BOOT_TIMEOUT_MS - 20s)）。 */
   bootRetryDelays?(): number[]
+  /**
+   * ADB 连通后是否继续等系统真正可用（issue #67：sys.boot_completed=1 且 package manager
+   * ready）。默认关闭以保持既有单测/attach 行为；wiring 生产装配开启。
+   */
+  waitBootCompleted?: boolean
+  /** waitBootCompleted 的超时（默认 90s）。 */
+  bootReadyTimeoutMs?: number
 }
 
 const DEFAULT_STREAM_GRACE_MS = 5_000
@@ -199,6 +206,7 @@ export class PhoneService implements PhoneOperations {
   #ensurePromise: Promise<void> | undefined
   #queue: Promise<unknown> = Promise.resolve()
   #serialPending = 0
+  #lastViewerTouchAt = 0
   #disposed = false
   /** booting 进度阶段（issue #56）。 */
   #bootPhase: BootPhase | undefined
@@ -470,6 +478,9 @@ export class PhoneService implements PhoneOperations {
   #onLifecycleError(error: Error, phase: string): void {
     if (phase === 'start' || phase === 'resume') {
       this.#bootPhase = undefined
+      // issue #67：boot 超时/失败时清理半启动实例，避免孤儿 emulator 占着 AVD/端口
+      const handle = this.#handle
+      void handle?.adapter.cancelStart?.().catch(() => undefined)
       // 启动/唤醒失败：adapter 可能已不可用，丢弃 handle 让下一次调用重新探测；
       // 探测本身失败的错误由 #runtime 缓存（30s 防抖），这里不再覆盖。
       this.#dropHandle()
@@ -494,6 +505,8 @@ export class PhoneService implements PhoneOperations {
         await this.#attachAdb(endpoint)
         this.#handleError = undefined
         this.#handleErrorAt = 0
+        // issue #67：adbd 可连 ≠ 系统可用；等 boot_completed + pm ready 再宣告 running
+        await this.#waitDeviceReady()
         this.#bootPhase = 'ready'
         return
       } catch (error) {
@@ -516,6 +529,36 @@ export class PhoneService implements PhoneOperations {
       return new AdbError(message, lastError.code, { cause: lastError, retryable: true })
     }
     return new Error(message, { cause: lastError })
+  }
+
+  /**
+   * 设备真正可用（issue #67，可选）：轮询 sys.boot_completed=1 且 pm 可用。
+   * 超时/命令失败都不抛错（后续截图重试兜底），只让 bootMs 更真实、首帧更快可用。
+   */
+  async #waitDeviceReady(): Promise<void> {
+    if (this.#deps.waitBootCompleted !== true) return
+    const device = this.#device
+    if (!device) return
+    const timeoutMs = this.#deps.bootReadyTimeoutMs ?? 90_000
+    const deadline = this.#now() + timeoutMs
+    this.#bootPhase = 'waiting-boot'
+    while (this.#now() < deadline) {
+      const completed = await device
+        .shell('getprop sys.boot_completed')
+        .catch(() => '')
+      if (completed.trim() === '1') {
+        // issue #67：boot_completed 还不够，boot animation 结束 + pm 可用才算真正可用
+        const bootanim = await device
+          .shell('getprop init.svc.bootanim')
+          .catch(() => '')
+        const packageManager = await device.shell('pm path android').catch(() => '')
+        if (bootanim.trim() === 'stopped' && packageManager.includes('package:')) {
+          this.#bootPhase = 'ready'
+          return
+        }
+      }
+      await this.#sleep(250)
+    }
   }
 
   #sleep(delayMs: number): Promise<void> {
@@ -615,6 +658,14 @@ export class PhoneService implements PhoneOperations {
     if (runtimeStatus.running || runtimeStatus.paused) return
     if (this.#lifecycle.state !== 'stopped') return
     if (this.#handle === handle) this.#dropHandle()
+  }
+
+  /** 观众活动也算 idle 交互（节流 30s，避免每帧 touch）。 */
+  #markViewerActive(): void {
+    const now = this.#now()
+    if (now - this.#lastViewerTouchAt < 30_000) return
+    this.#lastViewerTouchAt = now
+    this.#lifecycle.touch({ wake: false })
   }
 
   #requireConnection(): AdbConnectionLike {

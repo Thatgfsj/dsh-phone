@@ -133,6 +133,60 @@ runtime 层本身**无状态**：`detectRuntime` / `resolveRuntime` 每次调用
 - 暂停失败不改变状态、重排 idle 稍后重试；启动/唤醒失败回到原状态并把错误抛给调用方。
 - 时钟可注入（`Clock`），单测用 `ManualClock` 验证 5min/30min，不真等。
 
+
+### 4.3 emulator 启动性能与 quick-boot（issue #67）
+
+实测（本机 Debian 13 / 16 vCPU / KVM / emulator 37.2.12 / Android 14 google_apis x86_64，
+独立 AVD + 端口 5556，不干扰用户的 5554 实例；2 轮取中位数）：
+
+| 场景 | adbd 端口就绪 | boot_completed(+bootanim/pm) | 首帧截图 | 进程启动→首帧 |
+|---|---|---|---|---|
+| 冷启动（有数据、无快照） | ~1.0s | ~33s | ~6.3s | ~40s |
+| 快照启动（quick-boot） | ~1.5s | ~13.5s | ~1.0s | **~15s** |
+| 暂停恢复（SIGTERM→快照加载） | ~0.9s | ~16.4s | ~2.6s | **~19s** |
+| 首次冷启动（全新 AVD 首 boot） | ~0.4s | ~95s | — | ~100s |
+
+结论：**温启动（有有效快照）从进程启动到首帧约 12–19s**，配合预热（prewarm）后用户打开面板时
+实例已在 running，面板首帧只受视频流启动影响（~1–3s）。真正的冷启动（无快照/首 boot）无法压到
+20s：Android 14 google_apis 首 boot 约 95s、有数据冷启动约 33s。aosp_atd（无 GApps/精简）可显著
+缩短冷启动，但本机未安装该镜像（插件不代装，安装命令见 docs/install.md），因此**未实测**。
+
+实现要点（emulator 适配器）：
+
+1. **quick-boot 快照**
+   - 启动始终带 `-snapshot default_boot`，**不传** `-no-snapshot-save`；
+   - 冷启动成功后通过 emulator console（`avd snapshot save default_boot`，token 读
+     `~/.emulator_console_auth_token`）主动保存一次，然后轮询 `snapshot.pb` 完整性；
+   - 启动前自检快照：`snapshot.pb` < 1KB 或缺少 ram 文件 → 判为损坏（旧实现 pause 10s SIGKILL 截断），
+     **删除快照目录回退冷启动**，避免 `Failed to load snapshot` 卡死；
+   - pause/stop：先 console 保存 + 校验，再 SIGTERM，最多等 **120s**（旧的 10s 会截断快照写入）。
+2. **同 AVD 复用（adopt）**：启动前扫描 `ps` 里同 AVD 的 qemu 进程；端口可达 → 直接复用
+   （不 spawn 第二实例，避免 `multi-instance FATAL`）；端口暂不可达 → 明确报错而非再开一台。
+   adopt 的用户实例：pause/stop/cancelStart 都不会杀掉它（只断开）。
+3. **就绪判定**：ADB 端口连上只是 adbd 起来；真正 running 需要
+   `sys.boot_completed=1` + `init.svc.bootanim=stopped` + `pm path android` 可用
+   （`PhoneService.waitBootCompleted`，wiring 默认开启，超时 90s）。避免黑屏期就报 running。
+4. **启动日志**：`spawnDetached` 支持 `logFile`，emulator 日志落盘
+   `/tmp/dsh-phone-emulator-&lt;consolePort&gt;.log`；进程早退时把日志尾部（含 FATAL）放进错误信息，
+   不再 `stdio:'ignore'` 盲等 120s。
+5. **参数**：`-no-boot-anim/-no-audio/-no-window/-no-metrics`、`-gp u auto`（有 `/dev/dri` 用
+   `angle_indirect`，否则 `swiftshader_indirect`）、`-memory 2048 -cores 4`、
+   `-camera-back/-camera-front none`；新建 AVD 用 `-d medium_phone`；
+   **只有用户显式改过 `emulator.resolution`（≠ 默认 720x1280）才传 `-skin`**，
+   避免把 medium_phone 的 density/skin 覆盖成 720dp 逻辑宽度。
+6. **idle/观看**：默认 idle 从 5min 调到 **20min**（暂停恢复也要 10–20s，5min 过于频繁）；
+   视频流有观众时按 30s 节流上报交互（`PhoneService.#markViewerActive`），不会在观看中 pause。
+7. **取消/孤儿**：boot 超时或启动失败时 `RuntimeAdapter.cancelStart()` 清理自己 spawn 的实例
+   （先保存快照再 SIGTERM），避免 boot 超时后留下孤儿 emulator 占着 AVD/端口。
+8. **测量脚本**：`node scripts/verify/measure-boot.mjs --repeat 2`，只使用 ≥5556 的独立端口
+   （启动前 bind 探测、就绪用 connect 探测，避免抢端口），输出冷启动/快照启动/暂停恢复/首帧的
+   JSON + Markdown 表；完整实测记录见 docs/verification.md。
+
+未验证：
+- aosp_atd 镜像未安装，未做实测对比（仅说明为可选快照镜像）；
+- Windows/macOS 的 quick-boot/console 保存未实测；
+- snapshots 文件格式按 emulator 37 目录结构（snapshot.pb + ram/img）自检，旧版本 emulator 可能不同。
+
 ### 4.2 emulator 健壮性（issue #56）
 
 | 项 | 实现 |

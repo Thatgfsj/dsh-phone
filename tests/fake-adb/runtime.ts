@@ -40,6 +40,8 @@ export class FakeCommandRunner implements CommandRunner {
   readonly #handlers: { match: (file: string, args: readonly string[]) => boolean; handler: FakeHandler }[] = []
   /** emulator -list-avds 返回的 AVD 列表（issue #56）。 */
   avds: string[] = ['dsh-phone-avd']
+  /** spawn 后立即让进程“退出”（模拟 emulator FATAL，issue #67）。 */
+  diesAfterSpawn = false
   #nextPid = 1000
 
   /** 注册按 (file, args) 匹配的处理函数；后注册的优先。 */
@@ -86,7 +88,7 @@ export class FakeCommandRunner implements CommandRunner {
   ): Promise<SpawnedProcess> {
     this.spawns.push({ file, args: [...args] })
     const pid = this.#nextPid++
-    this.alive.add(pid)
+    if (!this.diesAfterSpawn) this.alive.add(pid)
     return { pid }
   }
 
@@ -114,6 +116,18 @@ export class FakeEnvironment implements RuntimeEnvironment {
   readonly busyPorts = new Set<number>()
   avdManagerPath: string | undefined
   processUsage: ProcessUsage = {}
+  /** emulator console 认证 token（issue #67）。 */
+  consoleToken: string | undefined
+  /** AVD 是否已有快照（issue #67；默认 true，避免单测触发 console 保存）。 */
+  hasSnapshot = true
+  /** 快照是否完整（false 时模拟 snapshot.pb 被截断）。 */
+  snapshotValid = true
+  snapshotInvalidReason = 'snapshot.pb 仅 11 字节（写入被截断）'
+  removedSnapshots = 0
+  /** 启动日志尾部（模拟 emulator FATAL）。 */
+  fileTail: string | undefined
+  /** GPU 模式探测结果。 */
+  gpuMode = 'swiftshader_indirect'
 
   async platform(): Promise<Platform> {
     return this.platformValue
@@ -149,12 +163,46 @@ export class FakeEnvironment implements RuntimeEnvironment {
     return this.busyPorts.has(port)
   }
 
+  async readEmulatorConsoleToken(): Promise<string | undefined> {
+    return this.consoleToken
+  }
+
+  async hasAvdSnapshot(): Promise<boolean> {
+    return this.hasSnapshot
+  }
+
   async findAvdManager(): Promise<string | undefined> {
     return this.avdManagerPath
   }
 
   async sampleProcessUsage(): Promise<ProcessUsage> {
     return this.processUsage
+  }
+
+  async readFileTail(): Promise<string | undefined> {
+    return this.fileTail
+  }
+
+  async inspectAvdSnapshot(): Promise<{ exists: boolean; valid: boolean; reason?: string }> {
+    if (!this.hasSnapshot) return { exists: false, valid: false, reason: '快照目录不存在' }
+    if (!this.snapshotValid) {
+      return { exists: true, valid: false, reason: this.snapshotInvalidReason }
+    }
+    return { exists: true, valid: true }
+  }
+
+  async removeAvdSnapshot(): Promise<void> {
+    this.removedSnapshots += 1
+    this.hasSnapshot = false
+    this.snapshotValid = false
+  }
+
+  emulatorLogPath(consolePort: number): string {
+    return '/tmp/fake-emulator-' + consolePort + '.log'
+  }
+
+  async detectGpuMode(): Promise<string> {
+    return this.gpuMode
   }
 }
 

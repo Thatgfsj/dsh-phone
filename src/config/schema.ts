@@ -87,10 +87,12 @@ export const Config = z.object({
     .default({ maxSize: 720, maxFps: 15, bitrate: 2000000 }),
   lifecycle: z
     .object({
-      idleTimeoutMs: z.number().default(300000),
+      idleTimeoutMs: z.number().default(1200000),
       pausedTimeoutMs: z.number().default(1800000),
+      // issue #67：插件加载后是否预热拉起实例（默认 false：只在面板打开/首次工具调用时启动）
+      prewarm: z.boolean().default(false),
     })
-    .default({ idleTimeoutMs: 300000, pausedTimeoutMs: 1800000 }),
+    .default({ idleTimeoutMs: 1200000, pausedTimeoutMs: 1800000, prewarm: false }),
   limits: z
     .object({
       maxInstances: z.number().default(1),

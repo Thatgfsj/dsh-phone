@@ -96,6 +96,31 @@ function adaptHandle(handle: StreamHandle): StreamSession {
   }
 }
 
+/**
+ * 预热（issue #67）：插件加载后、onboarding accepted 且 lifecycle.prewarm=true 时，
+ * 延迟一小会儿主动 ensureRunning，避免用户首次点击时等冷启动。
+ * 返回清理函数（ctx.effect 用）。默认关闭（config 默认 false）。
+ */
+export function prewarmPhoneService(
+  service: Pick<PhoneService, 'ensureRunning'>,
+  config: PhoneConfig,
+  options: { delayMs?: number; schedule?: (callback: () => void, delayMs: number) => () => void } = {},
+): () => void {
+  if (readOnboarding(config).status !== 'accepted') return () => {}
+  if (config.lifecycle.prewarm !== true) return () => {}
+  const delayMs = options.delayMs ?? 1_000
+  const schedule =
+    options.schedule ??
+    ((callback: () => void, waitMs: number) => {
+      const timer = setTimeout(callback, waitMs)
+      timer.unref?.()
+      return () => clearTimeout(timer)
+    })
+  return schedule(() => {
+    void service.ensureRunning().catch(() => undefined)
+  }, delayMs)
+}
+
 /** 创建 Host 侧 PhoneService（真实依赖；单测不经过本函数）。 */
 export function createPhoneService(config: PhoneConfig): PhoneService {
   const env = createSystemEnvironment()
@@ -118,5 +143,8 @@ export function createPhoneService(config: PhoneConfig): PhoneService {
       return adaptHandle(handle)
     },
     createLifecycle: (hooks, timings) => new PhoneLifecycle(hooks, timings),
+    // issue #67：等 boot_completed + pm ready，让 bootMs 真实、首次操作不再等系统
+    waitBootCompleted: true,
+    bootReadyTimeoutMs: 90_000,
   })
 }

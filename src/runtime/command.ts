@@ -6,6 +6,7 @@
  */
 
 import { execFile, spawn } from 'node:child_process'
+import { closeSync, openSync } from 'node:fs'
 
 import type {
   CommandResult,
@@ -68,14 +69,17 @@ function spawnDetached(
   options: SpawnDetachedOptions = {},
 ): Promise<SpawnedProcess> {
   const env = options.env ? { ...process.env, ...options.env } : process.env
+  // issue #67：后台进程的 stdout/stderr 落盘，FATAL/启动失败不再静默（原来 stdio:'ignore'）。
+  const logFd = options.logFile ? openSync(options.logFile, 'a') : undefined
   return new Promise<SpawnedProcess>((resolve, reject) => {
     const child = spawn(file, [...args], {
       cwd: options.cwd,
       env,
       detached: true,
-      stdio: 'ignore',
+      stdio: logFd === undefined ? 'ignore' : ['ignore', logFd, logFd],
       windowsHide: true,
     })
+    if (logFd !== undefined) closeSync(logFd)
     let settled = false
     child.once('error', (error) => {
       if (settled) return

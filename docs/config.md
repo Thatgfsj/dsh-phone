@@ -40,8 +40,9 @@ dsh-phone:
     maxFps: 15
     bitrate: 2000000
   lifecycle:
-    idleTimeoutMs: 300000        # running → paused（5 分钟）
+    idleTimeoutMs: 1200000       # running → paused（20 分钟；issue #67 从 5min 调大，暂停恢复也要 ~10-20s）
     pausedTimeoutMs: 1800000     # paused → stopped（30 分钟）
+    prewarm: false               # 插件加载后预热拉起实例（#67；默认 false，面板打开/首次调用才启动）
   limits:
     maxInstances: 1              # 首版固定单实例
 ```
@@ -63,8 +64,9 @@ dsh-phone:
 | `stream.maxSize` | number | `720` | 否 | 插件（用户可改配置） | scrcpy `max_size` |
 | `stream.maxFps` | number | `15` | 否 | 插件（用户可改配置） | scrcpy `max_fps` |
 | `stream.bitrate` | number | `2000000` | 否 | 插件（用户可改配置） | scrcpy 视频码率（bps） |
-| `lifecycle.idleTimeoutMs` | number | `300000` | 否 | 用户 | 5 分钟无交互 → paused |
+| `lifecycle.idleTimeoutMs` | number | `1200000` | 否 | 用户 | 20 分钟无交互 → paused（issue #67；观看视频也算交互） |
 | `lifecycle.pausedTimeoutMs` | number | `1800000` | 否 | 用户 | paused 30 分钟 → stopped |
+| `lifecycle.prewarm` | boolean | `false` | 否 | 用户 | 插件加载后预热启动（需 onboarding accepted；加速首次点击，代价是常驻内存） |
 | `limits.maxInstances` | number | `1` | 否 | 固定 | 首版单实例 |
 
 ## 3. 按场景修改

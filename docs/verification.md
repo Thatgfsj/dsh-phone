@@ -222,3 +222,73 @@ attach.endpoint=127.0.0.1:5555。
     ls /tmp/dsh-phone-e2e/screenshot-*.png    # 截图证据
 
 证据文件：/tmp/dsh-phone-e2e/report.json（本轮实测）、截图 PNG；临时 web/DSH_HOME 已清理。
+
+
+## 8. emulator 启动性能（issue #67）
+
+### 8.1 环境与方法
+
+- 宿主：Debian 13 / 16 vCPU / KVM（`/dev/kvm`）/ 内存 15GB；Android emulator **37.2.12**；
+  镜像 `system-images;android-34;google_apis;x86_64`；AVD `dsh-phone-perf`（独立实例，
+  **端口 5556/5557**，不干扰用户在 5554/5555 的实例）。
+- 测量脚本：`node scripts/verify/measure-boot.mjs --repeat 2 --out <json>`；
+  每场景两轮取中位数。指标：
+  - adbd 端口就绪：emulator 进程启动 → ADB TCP 端口可连；
+  - boot_completed：进程启动 → `sys.boot_completed=1` 且 `pm path android` 可用
+    （脚本较修复后的 Host 就绪判定少查 bootanim，故 Host 视角略慢 0.5–1s）；
+  - 首帧截图：boot_completed 后第一次成功 `screencap` 的耗时；
+  - 进程启动→首帧 = boot_completed 中位数 + 首帧中位数（端到端近似）。
+- 每轮流程：删快照 → 冷启动测量 → console `avd snapshot save default_boot` + 等 `snapshot.pb` 稳定 →
+  SIGTERM → 快照启动测量 → 再次 SIGTERM → 暂停恢复测量。
+- AVD 参数：修复后新建 AVD 使用 `-d medium_phone`（实测 config：1080x2400 @420dpi，
+  ramSize 1536M；启动时 `-memory 2048 -cores 4`），默认不传 `-skin`。
+
+### 8.2 实测数字（2 轮中位数）
+
+| 场景 | adbd 端口就绪 | boot_completed | 首帧截图 | 进程启动→首帧 |
+|---|---|---|---|---|
+| 冷启动（有数据、无快照） | 1.0s | 33.2s | 6.3s | **~40s** |
+| 快照启动（quick-boot） | 1.5s | 13.5s | 1.0s | **~15s** |
+| 暂停恢复（SIGTERM→快照加载） | 0.9s | 16.4s | 3.1s | **~19s** |
+| 首次冷启动（全新 AVD 第一次 boot） | 0.4s | 94.8s | —（当时截图未就绪） | **~95s** |
+
+补充证据（emulator 日志 `Successfully loaded snapshot ... using X ms`）：快照加载本身 8.4s / 10.1s /
+15.7s / 19.6s / 20.6s 波动，主要受宿主 I/O 与其它 emulator 竞争影响；这是“暂停恢复 ≈15–20s”的主因。
+
+### 8.3 结论与目标达成情况
+
+- **温启动（有有效 quick-boot 快照）进程启动→首帧 ≈ 15s ≤ 20s：达成**。开启预热
+  （`lifecycle.prewarm=true`）或面板先打开后，面板首帧只需视频流启动（~1–3s）。
+- **冷启动 ≤20s：未达成，且有客观下限**。Android 14 google_apis 首次 boot ≈95s、有数据冷启动 ≈33s；
+  这部分由系统镜像决定，靠 flag 压不下去。可选方案是 **aosp_atd**（精简镜像，无 GApps）——本机
+  **未安装**该 system image（插件不代装），因此**未实测**；安装后
+  `node scripts/verify/measure-boot.mjs --image "system-images;android-34;aosp_atd;x86_64"` 即可复测。
+- 修复前的失败形态（用户实测 ~100s 首次、恢复慢）：快照 `Failed to load snapshot`（`snapshot.pb`
+  仅 11 字节，pause 的 10s SIGKILL 截断写入）、就绪只看 TCP 端口导致黑屏期 running、同 AVD 再开一台
+  multi-instance FATAL。见 §8.4 的修复清单。
+
+### 8.4 本 PR 的启动修复（对应现象）
+
+1. 快照有效性自检：启动前检查 `<avd>/snapshots/default_boot/snapshot.pb` >1KB 且存在 ram/img，
+   无效则删除目录回退冷启动（不再 `Failed to load snapshot`）。
+2. 保存不再 10s SIGKILL：pause/stop 先 console `avd snapshot save default_boot`（token 读
+   `~/.emulator_console_auth_token`）并轮询 `snapshot.pb` 稳定，再 SIGTERM，最多等 120s。
+3. 就绪 = `sys.boot_completed=1` + `init.svc.bootanim=stopped` + `pm path android` 可用
+   （Host 侧 `waitBootCompleted`，超时 90s），不再以 TCP 端口作为 running 依据。
+4. spawn 日志落盘 `/tmp/dsh-phone-emulator-<port>.log`；进程早退时把日志尾部（FATAL）放进错误，
+   不再 `stdio:'ignore'` 盲等 120s；boot 超时调用 `adapter.cancelStart()` 清理孤儿。
+5. 同 AVD 已在运行 → adopt 复用（不 spawn 第二实例；端口未就绪则明确报错）；adopt 的用户实例
+   不会被 pause/stop/cancelStart 杀掉。
+6. AVD 新建使用 `-d medium_phone`、不默认 `-skin`；补 `-no-metrics/-camera none/-memory/-cores`；
+   `-gpu` 按宿主自动（有 `/dev/dri` → `angle_indirect`，否则 `swiftshader_indirect`）。
+7. idle 默认 5min → 20min，观看视频按 30s 节流计入交互（不会看着看着被 pause）。
+8. 测量脚本 `scripts/verify/measure-boot.mjs`：强制 ≥5556 端口、启动前 bind 探测、就绪用 connect
+   探测（不再抢端口），支持 `--repeat/--json/--out`。
+
+### 8.5 未验证 / 遗留
+
+- aosp_atd 未安装 → 冷启动优化未实测（仅有官方“专为测试、启动更快”的定性说明）。
+- 最终一轮 `medium_phone + angle_indirect` 组合的重复测量未完成（宿主同时跑用户 emulator，
+  样本噪声大）；上表为 pixel_6 参数 + swiftshader_indirect 的两轮中位数，可复现。
+- Windows/macOS 的 quick-boot 与 console 保存未实测。
+- #72 的安全/生命周期项（phone_key 白名单、screenshot 掩码、booting 断连、control 单飞）拆到独立 PR。

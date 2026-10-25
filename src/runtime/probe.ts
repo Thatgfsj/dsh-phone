@@ -5,9 +5,9 @@
  * 单测注入假的 {@link RuntimeEnvironment}，不依赖本机环境。
  */
 
-import { access, readFile, readdir } from 'node:fs/promises'
+import { access, readFile, readdir, rm } from 'node:fs/promises'
 import { connect } from 'node:net'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { waitUntil } from '../adb/timing.ts'
@@ -207,6 +207,102 @@ export function parseProcMeminfoTotalKb(text: string): number | undefined {
   return match ? Number(match[1]) : undefined
 }
 
+/** ~/.emulator_console_auth_token（console 认证 token）。 */
+export async function readEmulatorConsoleToken(): Promise<string | undefined> {
+  const tokenPath = join(homedir(), '.emulator_console_auth_token')
+  try {
+    const text = await readFile(tokenPath, 'utf8')
+    const token = text.trim()
+    return token.length > 0 ? token : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** 读取文件最后 N 行（不存在/失败返回 undefined）。 */
+export async function readFileTail(path: string, lines = 20): Promise<string | undefined> {
+  try {
+    const text = await readFile(path, 'utf8')
+    return text.split(/\r?\n/).slice(-lines).join('\n')
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 检查 quick-boot 快照是否完整（issue #67）。
+ * emulator 37 的快照目录至少要有 snapshot.pb（>1KB）与 ram 文件；pause 被 SIGKILL 截断时
+ * snapshot.pb 可能只有几十字节，继续用 -snapshot 加载会 Failed to load snapshot。
+ */
+export async function inspectAvdSnapshot(
+  avdName: string,
+  snapshotName = 'default_boot',
+): Promise<{ exists: boolean; valid: boolean; reason?: string }> {
+  const avdHome = process.env.ANDROID_AVD_HOME || join(homedir(), '.android', 'avd')
+  const dir = join(avdHome, avdName + '.avd', 'snapshots', snapshotName)
+  let entries: string[]
+  try {
+    entries = await readdir(dir)
+  } catch {
+    return { exists: false, valid: false, reason: '快照目录不存在' }
+  }
+  const snapshotPb = join(dir, 'snapshot.pb')
+  let size = 0
+  try {
+    size = (await readFile(snapshotPb)).byteLength
+  } catch {
+    return { exists: true, valid: false, reason: '缺少 snapshot.pb' }
+  }
+  if (size < 1024) {
+    return { exists: true, valid: false, reason: 'snapshot.pb 仅 ' + size + ' 字节（写入被截断）' }
+  }
+  const hasRam = entries.some((name) => name.startsWith('ram') || name.endsWith('.img'))
+  if (!hasRam) return { exists: true, valid: false, reason: '缺少 ram/img 快照文件' }
+  return { exists: true, valid: true }
+}
+
+/** 删除损坏的 AVD 快照目录（下次启动回退冷启动）。 */
+export async function removeAvdSnapshot(
+  avdName: string,
+  snapshotName = 'default_boot',
+): Promise<void> {
+  const avdHome = process.env.ANDROID_AVD_HOME || join(homedir(), '.android', 'avd')
+  await rm(join(avdHome, avdName + '.avd', 'snapshots', snapshotName), {
+    recursive: true,
+    force: true,
+  })
+}
+
+/** 实例启动日志路径（/tmp 下，按 console 端口区分）。 */
+export function emulatorLogPath(consolePort: number): string {
+  return join(tmpdir(), 'dsh-phone-emulator-' + consolePort + '.log')
+}
+
+/** GPU 模式：有 DRM 设备（可用 Vulkan/ANGLE）→ angle_indirect，否则 swiftshader_indirect。 */
+export async function detectGpuMode(): Promise<string> {
+  try {
+    await access('/dev/dri')
+    return 'angle_indirect'
+  } catch {
+    return 'swiftshader_indirect'
+  }
+}
+
+/** AVD 的 quick-boot 快照目录是否存在且非空。 */
+export async function hasAvdSnapshot(
+  avdName: string,
+  snapshotName = 'default_boot',
+): Promise<boolean> {
+  const avdHome = process.env.ANDROID_AVD_HOME || join(homedir(), '.android', 'avd')
+  const snapshotDir = join(avdHome, avdName + '.avd', 'snapshots', snapshotName)
+  try {
+    const entries = await readdir(snapshotDir)
+    return entries.length > 0
+  } catch {
+    return false
+  }
+}
+
 const CLOCK_TICKS_PER_SECOND = 100
 const lastProcSample = new Map<number, { jiffies: number; at: number }>()
 
@@ -310,6 +406,34 @@ export function createSystemEnvironment(
 
     async isPortBusy(port: number, timeoutMs = 300) {
       return isPortOpen({ host: '127.0.0.1', port }, timeoutMs)
+    },
+
+    async readFileTail(path: string, lines?: number) {
+      return readFileTail(path, lines)
+    },
+
+    async inspectAvdSnapshot(avdName: string, snapshotName = 'default_boot') {
+      return inspectAvdSnapshot(avdName, snapshotName)
+    },
+
+    async removeAvdSnapshot(avdName: string, snapshotName = 'default_boot') {
+      await removeAvdSnapshot(avdName, snapshotName)
+    },
+
+    emulatorLogPath(consolePort: number) {
+      return emulatorLogPath(consolePort)
+    },
+
+    async detectGpuMode() {
+      return detectGpuMode()
+    },
+
+    async readEmulatorConsoleToken() {
+      return readEmulatorConsoleToken()
+    },
+
+    async hasAvdSnapshot(avdName: string, snapshotName = 'default_boot') {
+      return hasAvdSnapshot(avdName, snapshotName)
     },
 
     async findAvdManager(emulatorPath?: string) {

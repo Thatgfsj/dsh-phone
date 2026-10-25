@@ -139,7 +139,8 @@ describe('EmulatorRuntime（假 emulator 可执行文件）', () => {
     assert.equal(args[0], '-avd')
     assert.equal(args[1], 'dsh-phone-avd')
     assert.ok(args.includes('-no-window'))
-    assert.ok(args.includes('-skin') && args.includes('720x1280'))
+    // issue #67：默认配置不覆盖 AVD skin（避免 720dp 逻辑宽度）；显式配置才传 -skin
+    assert.equal(args.includes('-skin'), false)
     assert.ok(args.includes('-port') && args.includes('5554'))
     assert.equal(adapter.kind, 'emulator')
     const status = await adapter.status()
