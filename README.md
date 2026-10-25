@@ -158,7 +158,7 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 | **R1 定点合并** | 允许写 `attach.endpoint` / `attach.resolved` / `attach.userHint` 与 `onboarding.status` / `onboarding.choice`；其余路径 400 `E_BAD_PATH`（Agent 通道仍禁写 userHint） |
 | **R2 原文保留** | `userHint` 永不规范化/删除；本地 Agent 通道写它返回 403 `E_FORBIDDEN` |
 | **R3 缓存命中** | `resolved=true` 直接连现有 endpoint，不重新探测、不重写配置 |
-| **R4 写后双验证** | 写后 describe 回读比对；写 endpoint/resolved 后再取 `phone_status` 要求 running |
+| **R4 写后双验证** | 写后 describe 回读比对；写 endpoint/resolved 后**强制重连新端点**并在新连接上 getprop 复验（不满足 → 502，issue #70） |
 | **R5 先验证后落盘** | 写 endpoint 前必须 `/attach/verify` 成功（loopback 且端口 ≥1024；记录 TTL 5 分钟），未验证/过期 409 `E_NOT_VERIFIED` |
 
 ## 错误码摘要

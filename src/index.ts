@@ -167,10 +167,8 @@ export function apply(ctx: Context, config: PhoneConfig): void {
         await agentReady.catch(() => undefined)
         return tokenStore.verifyRequest(req)
       },
-      recheckConnectivity: async () => {
-        await service.ensureRunning()
-        return service.status()
-      },
+      // issue #70：R4b 必须在新连接上 verify（重连 + getprop），不能复用旧连接
+      recheckConnectivity: () => service.reconnectAndVerify(),
     })
     webCtx.effect(() =>
       webServer.register({
