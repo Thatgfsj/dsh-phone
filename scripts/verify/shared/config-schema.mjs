@@ -52,7 +52,7 @@ export function assertSchema(schema) {
   assertEqual(stream.properties.maxFps.default, 15, 'stream.maxFps 默认值')
   assertEqual(stream.properties.bitrate.default, 2000000, 'stream.bitrate 默认值')
   const lifecycle = firstObjectSchema(phone.properties.lifecycle)
-  assertEqual(lifecycle.properties.idleTimeoutMs.default, 300000, 'lifecycle.idleTimeoutMs 默认值')
+  assertEqual(lifecycle.properties.idleTimeoutMs.default, 1200000, 'lifecycle.idleTimeoutMs 默认值')
   assertEqual(lifecycle.properties.pausedTimeoutMs.default, 1800000, 'lifecycle.pausedTimeoutMs 默认值')
   assertEqual(firstObjectSchema(phone.properties.limits).properties.maxInstances.default, 1, 'limits.maxInstances')
   assertEqual(phone.properties.enabled.default, true, 'enabled 默认值')
