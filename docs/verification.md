@@ -40,7 +40,7 @@ npm run verify
 | 7 | 安装冒烟（profile + dump） | \`node scripts/verify/verify-install.mjs\` | PASS | 本机 dsh + pnpm | 见 §3 证据 |
 | 8 | 安装冒烟（web apply） | 同上（阶段 B） | PASS | 临时隔离 \`DSH_HOME\` | 起 web 进程，验证 401/200 与 config 生效 |
 | 9 | redroid 真实运行时 | e2e | SKIP | 需 Docker + binder | 本机无 Docker |
-| 10 | emulator 真实运行时（attach 复用现有实例） | DSH_PHONE_E2E=1 node scripts/verify/verify-emulator.mjs | 部分 PASS / 1 缺陷（截图 PASS；Host WS 视频流 FAILED） | 需 127.0.0.1:5555 有 adbd；本机实例由用户 live 会话拉起 | 见 §7；缺陷 host-adb-raw-double-unwrap（另开 issue） |
+| 10 | emulator 真实运行时（attach 复用现有实例） | DSH_PHONE_E2E=1 node scripts/verify/verify-emulator.mjs | 部分 PASS / 1 缺陷（截图 PASS；Host WS 视频流 FAILED） | 需 127.0.0.1:5555 有 adbd；本机实例由用户 live 会话拉起 | 见 §7；缺陷 host-adb-raw-double-unwrap（issue #59） |
 | 11 | scrcpy 实连（stream 层直连对照） | 同上（脚本内直连 src/stream） | PASS（51 帧/5s，keyframe 1，control OK） | 真实 emulator | Host WS 路径被 #10 缺陷阻断；见 §7 |
 | 12 | emulator 自启（B 分支） | — | SKIP | 需停用用户 live 实例 | 按 Lead 决策不 SIGTERM 用户实例；由 #40 人工清单覆盖 |
 | 13 | 真实 attach（TCP adbd） | 同上 | PASS（ADB 直连 + getprop + wm size） | 127.0.0.1:5555 | 本机为 emulator adbd，非独立真机 |
@@ -123,7 +123,7 @@ stderr 仅有宿主无关警告（本机 \`all_proxy\` 是 SOCKS 的提示），
 7. **\`ctx.connection.requestRejection\` 在自定义 prefix/upgrade 的真实行为**：安装冒烟验证了返回 401 的路径；401/403 的 Origin/跨站语义未在真实浏览器验证。
 8. **卸载/重载清理**：token 文件删除见 §3.4 观察项；HMR 重载后的旧 token 失效未验证。
 9. **本地平台限制**：本机无 Docker、无独立真机、无浏览器自动化；emulator + AVD + scrcpy jar 已具备（§7 实测）。
-10. **真实缺陷（本轮新发现，未在本 PR 修）**：Host PhoneService 把 AdbConnection.raw 传给 stream 层，stream 再读 .raw 得到 undefined，真实设备上 E_STREAM_START_FAILED: Cannot read properties of undefined (reading sync)；影响视频流与中文输入/触摸控制通道（截图不受影响）。详见 §7 与对应 issue。
+10. **真实缺陷（本轮新发现，未在本 PR 修）**：Host PhoneService 把 AdbConnection.raw 传给 stream 层，stream 再读 .raw 得到 undefined，真实设备上 E_STREAM_START_FAILED: Cannot read properties of undefined (reading sync)；影响视频流与中文输入/触摸控制通道（截图不受影响）。详见 §7 与 issue #59。
 
 ## 5. 人工待办（真实浏览器，禁止当成已通过）
 
@@ -205,7 +205,7 @@ attach.endpoint=127.0.0.1:5555。
   src/stream/scrcpy.ts 期望 AdbConnection 并再次读 adb.raw -> undefined，
   AdbScrcpyClient.pushServer(undefined) 读 .sync 抛错。
 - 影响：视频流（WS）与 phone_input_text/触摸控制通道在真实设备不可用；截图/工具 shell 不受影响。
-- 处理：**本 PR 不修**（按 Lead 决策）；已记录 issue，修复后重跑本脚本即可把 §7 的 FAILED 转 PASS。
+- 处理：**本 PR 不修**（按 Lead 决策）；已记录 issue #59，修复后重跑本脚本即可把 §7 的 FAILED 转 PASS。
 
 ### 7.2 复现与证据
 
