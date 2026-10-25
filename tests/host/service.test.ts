@@ -580,3 +580,25 @@ test('启动失败丢弃 handle：下一次 ensureRunning 立即重探（不受 
   assert.equal(resolveCalls, 2)
   assert.equal(harness.lifecycle.state, 'running')
 })
+test('视频流/控制通道接线：startStream 收到 AdbConnection 本身，而不是 .raw（issue #59）', async () => {
+  const connection: AdbConnectionLike = {
+    raw: { fake: 'tango-adb' },
+    disconnected: new Promise<void>(() => {}),
+    close: async () => {},
+  }
+  const harness = makeService({ connect: async () => connection })
+
+  // 无 viewer 的中文输入 → control-only 会话
+  await harness.service.inputText('你好，世界')
+  assert.equal(harness.streams.length, 1)
+  assert.equal(harness.streams[0]!.video, false)
+  assert.equal(harness.streams[0]!.adb, connection, 'control-only 必须收到 AdbConnection 本身')
+  assert.notEqual(harness.streams[0]!.adb, connection.raw, '不得再传 connection.raw')
+
+  // 有人看面板 → 视频会话
+  await harness.service.startStream({ video: () => {}, error: () => {} })
+  assert.equal(harness.streams.length, 2)
+  assert.equal(harness.streams[1]!.video, true)
+  assert.equal(harness.streams[1]!.adb, connection, '视频会话必须收到 AdbConnection 本身')
+  assert.notEqual(harness.streams[1]!.adb, connection.raw, '不得再传 connection.raw')
+})
