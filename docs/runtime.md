@@ -133,6 +133,26 @@ runtime 层本身**无状态**：`detectRuntime` / `resolveRuntime` 每次调用
 - 暂停失败不改变状态、重排 idle 稍后重试；启动/唤醒失败回到原状态并把错误抛给调用方。
 - 时钟可注入（`Clock`），单测用 `ManualClock` 验证 5min/30min，不真等。
 
+### 4.2 emulator 健壮性（issue #56）
+
+| 项 | 实现 |
+|---|---|
+| avdmanager 多候选 | <BT>probe.findAvdManagerPath<BT>：<BT><SDK>/cmdline-tools/latest/bin<BT> → <BT>cmdline-tools/<各版本>/bin<BT>（readdir 展开、优先新版本）→ <BT><SDK>/tools/bin<BT> → <BT>ANDROID_HOME/ANDROID_SDK_ROOT<BT> → PATH（<BT>which/where avdmanager<BT>）；Windows 用 <BT>avdmanager.bat<BT> |
+| AVD 安全化 | 显式 <BT>emulator.avdName<BT> 必须存在于 <BT>emulator -list-avds<BT>，否则**明确报错并列出已有 AVD**（不再静默取第一个）；自动模式只选 <BT>dsh-phone-*<BT> 前缀的 AVD，没有则用 avdmanager 创建 <BT>dsh-phone-avd<BT>；绝不劫持用户自己的 AVD |
+| 空闲端口 | 默认 console 5554 / adb 5555 被其它模拟器占用时，向上找空闲偶数 console（5556/5558…，上限 5584），<BT>adb = console + 1<BT>；实际端口写入 <BT>RuntimeStatus.endpoint<BT> 与 <BT>ensureRunning()<BT> 返回值（ADB connect 用实际端口）；显式 <BT>emulator.port<BT> 被占用则明确报错 |
+| cpuPct/memPct | 尽力而为：emulator 读 Linux <BT>/proc/<pid>/stat、<BT>/proc/<pid>/status<BT>（CPU% 需两次采样取 delta）；redroid 用 <BT>docker stats --no-stream<BT>；attach 用 <BT>dumpsys cpuinfo<BT> + <BT>/proc/meminfo<BT>（service 层 5s 缓存）；取不到就省略字段，不报错 |
+| booting 进度 | <BT>RuntimeAdapter.ensureRunning<BT> 的 onProgress 第二参是 <BT>BootPhase<BT>（launching / waiting-adbd / connecting-adb / ready）；<BT>/status<BT> 在 booting 时返回 <BT>phase<BT>（可选字段，向后兼容；客户端可继续用 bootMs） |
+
+取舍：
+- 端口只探测**是否有人在听**（<BT>RuntimeEnvironment.isPortBusy<BT>），与“adbd 就绪”的 <BT>waitForPort<BT> 语义分开，避免把就绪端口误判为占用。
+- AVD 自动创建仍是“用户显式接受安装/首次启动”后的行为，插件不安装 system image（创建失败会给安装指引）。
+- cpuPct/memPct 是展示性数据：采样失败/平台不支持时静默省略，绝不阻断 status 或工具调用。
+
+未验证（本机无 emulator 二进制/AVD、无 Docker）：
+- avdmanager 版本目录展开、真实 AVD 创建与 <BT>-list-avds<BT> 解析未在真机验证；
+- 端口自愈（5554 被占用→5556）未在真的双 emulator 场景验证；
+- /proc CPU delta 与 <BT>docker stats<BT> 数值未与本机真实进程/容器对账。
+
 ### 4.1 冷启动窗口内的重试（issue #44）
 
 真实 emulator 冷启动验收发现：adbd 端口很快可连，但系统尚未 `boot_completed`，

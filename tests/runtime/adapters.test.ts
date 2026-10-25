@@ -147,12 +147,9 @@ describe('EmulatorRuntime（假 emulator 可执行文件）', () => {
     assert.ok(status.pid !== undefined)
   })
 
-  test('avdName 为空 → 用 -list-avds 的第一个 AVD', async () => {
-    const runner = new FakeCommandRunner().on('/fake/sdk/emulator/emulator', (file, args) =>
-      args[0] === '-list-avds'
-        ? { code: 0, stdout: 'First_AVD\nSecond_AVD\n', stderr: '', timedOut: false }
-        : { code: 0, stdout: '', stderr: '', timedOut: false },
-    )
+  test('avdName 为空 → 只选 dsh-phone-* 前缀 AVD（不劫持用户 AVD，issue #56）', async () => {
+    const runner = new FakeCommandRunner()
+    runner.avds = ['Pixel_7_API_34', 'dsh-phone-avd']
     const env = new FakeEnvironment()
     env.emulatorPath = '/fake/sdk/emulator/emulator'
     env.openPorts.add(5555)
@@ -161,8 +158,101 @@ describe('EmulatorRuntime（假 emulator 可执行文件）', () => {
       deps: { env, runner },
     })
     await adapter.ensureRunning()
-    assert.equal(runner.spawns[0]!.args[1], 'First_AVD')
+    assert.equal(runner.spawns[0]!.args[1], 'dsh-phone-avd')
     assert.equal(runner.spawns[0]!.args.includes('-skin'), false)
+  })
+
+  test('没有 dsh-phone-* AVD → 用 avdmanager 创建 dsh-phone-avd', async () => {
+    const runner = new FakeCommandRunner()
+    runner.avds = ['Pixel_7_API_34']
+    runner.on('/fake/sdk/cmdline-tools/latest/bin/avdmanager', () => ({
+      code: 0,
+      stdout: '',
+      stderr: '',
+      timedOut: false,
+    }))
+    const env = new FakeEnvironment()
+    env.emulatorPath = '/fake/sdk/emulator/emulator'
+    env.avdManagerPath = '/fake/sdk/cmdline-tools/latest/bin/avdmanager'
+    env.openPorts.add(5555)
+    const adapter = new EmulatorRuntime({ emulator: { avdName: '', resolution: '' }, deps: { env, runner } })
+    await adapter.ensureRunning()
+    assert.equal(runner.spawns[0]!.args[1], 'dsh-phone-avd')
+    const create = runner.calls.find((call) => call.file.endsWith('avdmanager'))
+    assert.ok(create)
+    assert.ok(create.args.includes('create') && create.args.includes('dsh-phone-avd'))
+  })
+
+  test('显式 avdName 不存在 → 明确报错并列出已有 AVD', async () => {
+    const runner = new FakeCommandRunner()
+    runner.avds = ['Pixel_7_API_34']
+    const env = new FakeEnvironment()
+    env.emulatorPath = '/fake/sdk/emulator/emulator'
+    const adapter = new EmulatorRuntime({ emulator: EMULATOR, deps: { env, runner } })
+    await assert.rejects(adapter.ensureRunning(), (error: unknown) => {
+      assert.ok(error instanceof RuntimeError)
+      assert.match(error.message, /avdName="dsh-phone-avd" 不存在/)
+      assert.match(error.message, /Pixel_7_API_34/)
+      return true
+    })
+    assert.equal(runner.spawns.length, 0)
+  })
+
+  test('找不到 avdmanager → 提示安装 cmdline-tools 的明确错误', async () => {
+    const runner = new FakeCommandRunner()
+    runner.avds = ['Pixel_7_API_34']
+    const env = new FakeEnvironment()
+    env.emulatorPath = '/fake/sdk/emulator/emulator'
+    const adapter = new EmulatorRuntime({ emulator: { avdName: '', resolution: '' }, deps: { env, runner } })
+    await assert.rejects(adapter.ensureRunning(), /找不到 avdmanager/)
+  })
+
+  test('console 5554/adb 5555 被占用 → 选空闲偶数 console 5556 / adb 5557', async () => {
+    const runner = new FakeCommandRunner()
+    const env = new FakeEnvironment()
+    env.emulatorPath = '/fake/sdk/emulator/emulator'
+    env.busyPorts.add(5554)
+    env.busyPorts.add(5555)
+    env.openPorts.add(5557)
+    const adapter = new EmulatorRuntime({ emulator: EMULATOR, deps: { env, runner } })
+    const endpoint = await adapter.ensureRunning()
+    assert.deepEqual(endpoint, { host: '127.0.0.1', port: 5557 })
+    const args = runner.spawns[0]!.args
+    assert.equal(args[args.indexOf('-port') + 1], '5556')
+    const status = await adapter.status()
+    assert.equal(status.endpoint?.port, 5557)
+  })
+
+  test('显式 emulator.port 被占用 → 明确报错（不自作主张换端口）', async () => {
+    const runner = new FakeCommandRunner()
+    const env = new FakeEnvironment()
+    env.emulatorPath = '/fake/sdk/emulator/emulator'
+    env.busyPorts.add(5556)
+    const adapter = new EmulatorRuntime({
+      emulator: { ...EMULATOR, port: 5557 },
+      deps: { env, runner },
+    })
+    await assert.rejects(adapter.ensureRunning(), /emulator.port=5557/)
+    assert.equal(runner.spawns.length, 0)
+  })
+
+  test('booting 阶段（launching/waiting-adbd/ready）与 cpuPct/memPct（issue #56）', async () => {
+    const runner = new FakeCommandRunner()
+    const env = new FakeEnvironment()
+    env.emulatorPath = '/fake/sdk/emulator/emulator'
+    env.openPorts.add(5555)
+    env.processUsage = { cpuPct: 12.5, memPct: 33.3 }
+    const adapter = new EmulatorRuntime({ emulator: EMULATOR, deps: { env, runner } })
+    const phases: string[] = []
+    await adapter.ensureRunning((_message, phase) => {
+      if (phase) phases.push(phase)
+    })
+    assert.ok(phases.includes('launching'))
+    assert.ok(phases.includes('waiting-adbd'))
+    assert.equal(phases.at(-1), 'ready')
+    const status = await adapter.status()
+    assert.equal(status.cpuPct, 12.5)
+    assert.equal(status.memPct, 33.3)
   })
 
   test('ensureRunning 幂等：进程仍活着时不重复拉起', async () => {
@@ -214,6 +304,19 @@ describe('EmulatorRuntime（假 emulator 可执行文件）', () => {
       deps: { env: new FakeEnvironment(), runner: new FakeCommandRunner() },
     })
     await assert.rejects(adapter.ensureRunning(), /未找到 Android SDK emulator/)
+  })
+
+  test('running 时尽力补齐 cpuPct/memPct（docker stats，issue #56）', async () => {
+    const runner = new FakeCommandRunner().dockerInspect('running')
+    runner.on(
+      (file, args) => file === 'docker' && args[0] === 'stats',
+      () => ({ code: 0, stdout: '12.50% 33.30%\n', stderr: '', timedOut: false }),
+    )
+    const adapter = new RedroidRuntime({ redroid: REDROID, deps: { env: dockerEnv(), runner } })
+    await adapter.ensureRunning()
+    const status = await adapter.status()
+    assert.equal(status.cpuPct, 12.5)
+    assert.equal(status.memPct, 33.3)
   })
 })
 
