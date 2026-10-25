@@ -3,13 +3,13 @@
 > 肥鱼的手机：给 DeepSeek Harness（DSH）提供一台运行在后端、经浏览器右侧栏呈现的 Android 实例，并注册 9 个 `phone_*` 工具供 Agent 直接操作。
 
 [![DSH](https://img.shields.io/badge/DSH-0.2.1--rc.2-blue)](https://github.com/deepseek-ai/deepseek-harness)
-[![version](https://img.shields.io/badge/version-v0.2.0-blueviolet)](#版本与状态)
+[![version](https://img.shields.io/badge/version-v0.2.1-blueviolet)](#版本与状态)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![files ≤1000 lines](https://img.shields.io/badge/file-%E2%89%A41000%20lines-brightgreen)](CONTRIBUTING.md)
 
 ## 版本与状态
 
-**v0.2.0（已发布）**：三运行时、9 个工具、scrcpy 视频流、右侧栏面板与设置页；本版新增**首次使用守卫**（onboarding）、会话头部入口/自动打开、booting 进度，并修复冷启动与 emulator 健壮性问题。发布说明见 [CHANGELOG.md](CHANGELOG.md#v020---2026-10-25)，验收状态见 [docs/verification.md](docs/verification.md)。
+**v0.2.1（已发布）**：补丁版，重做**手机面板前端布局**——拆分 header/stage/footer、宽度断点 + 容器查询（≤360px），修复长文本被挤成竖排单字、booting 黑屏、header/footer 拥挤（[#62](https://github.com/Thatgfsj/dsh-phone/issues/62)）。功能面与 v0.2.0 相同（三运行时、9 个工具、scrcpy 流、onboarding 守卫）。发布说明见 [CHANGELOG.md](CHANGELOG.md#v021---2026-10-25)，验收状态见 [docs/verification.md](docs/verification.md)。
 
 - 需求原文：[docs/SPEC.md](docs/SPEC.md)（**禁止改写**）。实现与需求的差异、未验证项见 [docs/host.md](docs/host.md)、[docs/runtime.md](docs/runtime.md)、[docs/stream.md](docs/stream.md)、[docs/client.md](docs/client.md)。
 - 集成点校准（DSH 0.2.1-rc.2 本机源码证据）：[docs/calibration.md](docs/calibration.md)；架构与协议契约：[docs/architecture.md](docs/architecture.md)、[docs/protocol.md](docs/protocol.md)。
@@ -38,7 +38,7 @@
 
 ## 安装
 
-**v0.2.0 已可用。** 要求：DSH `>=0.2.1-rc.2 <0.3.0`、Node `>=20`；宿主浏览器需支持 WebCodecs（Chrome / Edge 等），不支持时自动回退 TinyH264 软解。源码安装见下，tarball 安装见 [docs/install.md](docs/install.md) §2。**安装/更新/启用插件后需重启 DSH 并刷新浏览器页面（F5）**，原因与排查见 [docs/install.md](docs/install.md) §1.1。
+**v0.2.1 已可用。** 要求：DSH `>=0.2.1-rc.2 <0.3.0`、Node `>=20`；宿主浏览器需支持 WebCodecs（Chrome / Edge 等），不支持时自动回退 TinyH264 软解。源码安装见下，tarball 安装见 [docs/install.md](docs/install.md) §2。**安装/更新/启用插件后需重启 DSH 并刷新浏览器页面（F5）**，原因与排查见 [docs/install.md](docs/install.md) §1.1。
 
 ```sh
 git clone https://github.com/Thatgfsj/dsh-phone.git
