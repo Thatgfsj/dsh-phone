@@ -9,6 +9,7 @@ import {
   NORMAL_CLOSURE,
   ReconnectBackoff,
   STREAM_PATH,
+  STREAM_REPLACED_CLOSURE,
   helloMessage,
   keyMessage,
   parseBinaryFrame,
@@ -205,6 +206,16 @@ export class StreamClient {
       this.#heartbeat = undefined
       if (this.#disposed) {
         this.#setState('closed')
+        return
+      }
+      if (event?.code === STREAM_REPLACED_CLOSURE) {
+        // issue #73：被另一个页面替换 → 终态 + 明确提示，不再自动重连（否则两页无限互踢）。
+        this.#setState('closed')
+        this.#options.onError?.({
+          code: 'E_STREAM_REPLACED',
+          message: '手机面板已在另一处打开',
+          retryable: false,
+        })
         return
       }
       if (event?.code === 1008) {

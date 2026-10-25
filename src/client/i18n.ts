@@ -32,6 +32,7 @@ export const zh: Dict = {
   'panel.reconnect': '重新连接',
   'panel.settingsHint': '在「设置 → 手机」里修改一句话或重置解析。',
   'panel.error.auth': '鉴权失败：请在 DSH Web 页面内打开本面板。',
+  'panel.error.replaced': '手机面板已在另一处打开（本页已停止推流，关闭另一处后点「重新连接」）。',
   'panel.error.noWeb': '当前 DSH 没有 Web 服务，视频流不可用。',
   'panel.error.stream': '视频流启动失败：{message}',
   'panel.error.decoder': '解码器初始化失败：{message}',
@@ -160,6 +161,8 @@ export const en: Dict = {
   'panel.reconnect': 'Reconnect',
   'panel.settingsHint': 'Edit the one-liner or reset parsing in Settings → Phone.',
   'panel.error.auth': 'Not authorized: open this panel inside the DSH Web page.',
+  'panel.error.replaced':
+    'The phone panel is open in another tab; streaming stopped here. Close the other tab, then reconnect.',
   'panel.error.noWeb': 'This DSH instance has no Web carrier; video is unavailable.',
   'panel.error.stream': 'Stream failed: {message}',
   'panel.error.decoder': 'Decoder initialization failed: {message}',

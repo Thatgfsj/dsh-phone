@@ -17,6 +17,8 @@ export interface StreamConnectionOptions {
   options: StreamOptions
   helloTimeoutMs: number
   maxBufferedBytes: number
+  /** 超过该时间未收到客户端消息 → 1011 断开（issue #73）。 */
+  idleTimeoutMs: number
   logger?: StreamLogger
   onClosed: () => void
 }
@@ -32,6 +34,8 @@ export class StreamConnection {
   #release: (() => Promise<void>) | undefined
   #starting: Promise<void> | undefined
   #helloTimer: ReturnType<typeof setTimeout> | undefined
+  #idleTimer: ReturnType<typeof setInterval> | undefined
+  #lastClientMessageAt = 0
   #closed = false
 
   constructor(ws: WebSocketConnection, options: StreamConnectionOptions) {
@@ -52,6 +56,8 @@ export class StreamConnection {
       if (!this.#helloDone) this.#fail(1008, 'E_BAD_REQUEST', 'hello 超时')
     }, this.#options.helloTimeoutMs)
     this.#helloTimer.unref?.()
+    this.#lastClientMessageAt = Date.now()
+    this.#armIdleTimer()
   }
 
   close(code: number, reason: string): void {
@@ -61,6 +67,7 @@ export class StreamConnection {
 
   async #onMessage(kind: 'text' | 'binary', data: Uint8Array): Promise<void> {
     if (this.#closed) return
+    this.#lastClientMessageAt = Date.now()
     if (kind === 'binary') {
       this.#fail(1002, 'E_BAD_REQUEST', '客户端不得发送 binary 消息')
       return
@@ -166,6 +173,7 @@ export class StreamConnection {
     this.#closed = true
     if (this.#helloTimer) clearTimeout(this.#helloTimer)
     this.#helloTimer = undefined
+    this.#clearIdleTimer()
     await this.#detach()
     this.#options.onClosed()
   }
@@ -179,8 +187,12 @@ export class StreamConnection {
           : meta.keyframe
             ? FRAME_TYPE.keyframe
             : FRAME_TYPE.delta
-        if (type === FRAME_TYPE.delta && this.#ws.bufferedBytes > this.#options.maxBufferedBytes) {
-          return // 背压：丢弃 delta，客户端等下一个 keyframe（不拆包）
+        if (this.#ws.bufferedBytes > this.#options.maxBufferedBytes) {
+          // issue #73：所有帧都受背压——delta 可丢；configuration/keyframe 丢了会黑屏，
+          // 直接断开让客户端重连拿新的 configuration + keyframe。
+          if (type === FRAME_TYPE.delta) return
+          this.#fail(1011, 'E_STREAM_BACKPRESSURE', 'WS 发送积压超过上限，已断开以恢复关键帧')
+          return
         }
         const pts = meta?.pts !== undefined ? microsToTicks(meta.pts) : this.#clock.next()
         this.#ws.sendBinary(encodeFrame(type, pts, chunk))
@@ -216,7 +228,30 @@ export class StreamConnection {
     if (this.#closed) return
     this.#sendError(errorCode, reason, false)
     this.#closed = true
+    this.#clearIdleTimer()
     this.#ws.close(code, reason)
+  }
+
+  /** issue #73：服务端跟踪客户端消息；超过 idleTimeoutMs 无任何消息 → 1011。 */
+  #armIdleTimer(): void {
+    this.#clearIdleTimer()
+    const idleTimeoutMs = this.#options.idleTimeoutMs
+    if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) return
+    const interval = Math.max(10, Math.min(1000, Math.floor(idleTimeoutMs / 2)))
+    this.#idleTimer = setInterval(() => {
+      if (this.#closed) return
+      if (Date.now() - this.#lastClientMessageAt >= idleTimeoutMs) {
+        this.#fail(1011, 'E_STREAM_IDLE', '超过 ' + idleTimeoutMs + 'ms 未收到客户端消息（半开连接）')
+      }
+    }, interval)
+    this.#idleTimer.unref?.()
+  }
+
+  #clearIdleTimer(): void {
+    if (this.#idleTimer !== undefined) {
+      clearInterval(this.#idleTimer)
+      this.#idleTimer = undefined
+    }
   }
 
   #logWarn(message: string): void {

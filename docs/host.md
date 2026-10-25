@@ -132,8 +132,10 @@ activity/window/display/battery/cpuinfo/meminfo/gfxinfo/input/power/wifi。
   `createLifecycle` 注入（host 不复制 state.ts/idle.ts 实现）。
 - **booting 中间态**：`ensureInteractive()` 在 state=booting 时立即返回 `{state:'booting', bootMs}`。
 - **串行队列**：screenshot 与全部设备 shell 命令共享一条 promise 队列，同一时刻最多 1 个 `screencap`。
-- **视频流引用计数**：`startStream(sink)` 首个 viewer 调用 stream `startStream`；release 后 5s 宽限关流
-  （测试可注入 `schedule`）；新 viewer 取消宽限并替换旧会话。
+- **视频流引用计数（issue #73）**：`startStream(sink)` 每次视频会话递增代际；旧代际 release 忽略，
+  不会关掉新流；release 后 5s 宽限关流（测试可注入 `schedule`）；新 viewer 取消宽限并替换旧会话。
+- **viewer 算交互（issue #73）**：viewer 存活期间每 60s `lifecycle.touch()`（心跳）；面板 touch/key/text
+  也 touch；idle 暂停前若仍有 viewer → pause 被否决（保持 running、不关流）。
 - **控制通道**：`inputText/touch` 优先复用活动视频会话的 controller；无 viewer 时经
   `startControlOnly`（只建 control socket，不编码视频）——满足 SPEC §3.6「无人看不开流」。
 - **断连**：`AdbConnection.disconnected` → 关闭会话 + `lifecycle.notifyDisconnected` → state=stopped，

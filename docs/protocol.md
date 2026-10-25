@@ -178,7 +178,12 @@ interface ProvisionStatus {
 - 客户端自动重连：仅在 **可见** 时；退避 `500ms * 2^n`，上限 8s，加 ±20% 抖动；n 在成功 `ready` 后归零。
 - 页面 `visibilitychange` 或 tab body 离开视口（IntersectionObserver 双检测）→ 立即 `close(1000)` 并置
   `visible:false`；恢复可见 → 重连并重新 `hello`。
-- 服务端对同一页面只允许一条流连接：新连接到来时先关闭同源旧连接（`code 1000`），避免重复 viewer。
+- 服务端对同一页面只允许一条流连接：新连接到来时先关闭同源旧连接（**`code 4001`**）；旧页面客户端
+  进入终态并提示「面板已在另一处打开」，不自动重连（否则两页会互相 replace 无限互踢，issue #73）。
+- **服务端空闲超时**：超过 60s 未收到客户端任何消息（hello/touch/key/text/visibility/ping）→ 1011
+  `E_STREAM_IDLE` 断开（清理半开连接）。
+- **背压**：WS 发送积压超过上限时，delta 帧丢弃（等下一个 keyframe）；configuration/keyframe 超限则
+  1011 `E_STREAM_BACKPRESSURE` 断开（客户端重连拿新的 config+keyframe，避免黑屏）。
 - 重连后**从头开始**（config packet + keyframe），不做断点续传。
 - 心跳：客户端 20s 无 binary/text 发 `ping`；60s 无 `pong` 视为半开 → 主动重连。
 
@@ -198,6 +203,9 @@ interface ProvisionStatus {
 | `E_ONBOARDING_DECLINED` | 200（/status、/screenshot）/ 工具结构化 | false | 用户选择暂不使用；可在设置页重新启用 |
 | `E_BOOTING` | 200/WS state | true | 启动中，带 `bootMs` |
 | `E_STREAM_START_FAILED` | WS error | true | scrcpy server 启动/推包失败 |
+| `E_STREAM_IDLE` | close 1011 | true | 60s 未收到客户端消息（半开连接） |
+| `E_STREAM_BACKPRESSURE` | close 1011 | true | WS 发送积压超限（keyframe/config 无法安全丢弃） |
+| `E_STREAM_REPLACED` | close 4001（客户端本地事件） | false | 同一实例的新页面替换了本连接；提示已在另一处打开 |
 | `E_STREAM_BUSY` | WS error | true | 已有会话且无法替换（正常不应出现） |
 | `E_DEVICE_DISCONNECTED` | WS error | true | ADB 断开，runtime 仍 running |
 | `E_DEVICE_COMMAND` | 500 | true | shell/input 执行失败，message 含截断 stderr |
