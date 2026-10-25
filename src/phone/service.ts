@@ -66,7 +66,8 @@ export interface StreamSink {
 }
 
 export interface StreamSessionOptions {
-  adb: unknown
+  /** 必须是 AdbConnection 本身（stream 层内部读 adb.raw）；禁止传 Tango Adb/.raw（issue #59）。 */
+  adb: AdbConnectionLike
   video: boolean
   sink?: StreamSink
   config: { maxSize: number; maxFps: number; bitrate: number }
@@ -350,7 +351,8 @@ export class PhoneService implements PhoneOperations {
     await this.#control?.close().catch(() => undefined)
     this.#control = undefined
     const session = await this.#deps.startStream({
-      adb: this.#requireConnection().raw,
+      // stream 层收的是 AdbConnection 本身（内部读 adb.raw）；传 Tango Adb 会 undefined（issue #59）
+      adb: this.#requireConnection(),
       video: true,
       sink,
       config: config.stream,
@@ -597,7 +599,8 @@ export class PhoneService implements PhoneOperations {
     await this.ensureRunning()
     const config = this.#deps.config()
     const session = await this.#deps.startStream({
-      adb: this.#requireConnection().raw,
+      // stream 层收的是 AdbConnection 本身（内部读 adb.raw）；传 Tango Adb 会 undefined（issue #59）
+      adb: this.#requireConnection(),
       video: false,
       config: config.stream,
     })
