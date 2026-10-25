@@ -8,13 +8,13 @@
 ```sh
 dsh --version                                   # 应为 0.2.1-rc.x
 node --version                                  # >=20
-dsh --profile web --dump-config | grep -n -A 12 'dsh-phone'   # 行是否存在
-ls -l lib/index.js lib/client.js                # 构建产物
-ls -l assets/scrcpy-server.jar                  # 视频/控制通道依赖
-ldd /dev/null >/dev/null 2>&1 || true
-docker info 2>/dev/null | head -3               # redroid 前提
-ls -l /dev/binder /dev/kvm 2>/dev/null          # redroid / emulator 前提
-node scripts/fetch-scrcpy-server.mjs --check    # jar 校验
+dsh --profile web --dump-config | grep -n -A 8 'dsh-phone'    # 行是否存在（半安装首要判据）
+PROFILE="${DSH_HOME:-$HOME/.dsh}/profiles/web/package.json"
+node -e "const p=require(process.argv[1]); console.log('dependency:', p.dependencies?.['dsh-phone']); console.log('bundles:', p.dsh?.profile?.bundles)" "$PROFILE"
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/dsh-phone/api/config   # 404=行未加载，401=已加载
+ls -l <profile>/node_modules/dsh-phone/lib/index.js <profile>/node_modules/dsh-phone/lib/client.js
+node scripts/install-check.mjs --profile web 2>/dev/null || true   # #74 安装自检（若存在）
+ls -l assets/scrcpy-server.jar                  # 可选：懒下载/离线时检查
 ```
 
 ## 1. 装了但没反应 / 工具列表没有 phone_*
@@ -28,6 +28,43 @@ node scripts/fetch-scrcpy-server.mjs --check    # jar 校验
 | DSH 版本不匹配 | `dsh --version` 不在 `>=0.2.1-rc.2 <0.3.0` | 升级/降级 DSH |
 | 没重启 DSH | 手工 `--patch overlay --help` 能看到 apply 日志 | 重启 DSH（不是刷新页面） |
 | peer 依赖解析失败 | 从插件目录 `node -e "import('@deepseek-ai/dsh-tools')"` 报 `ERR_MODULE_NOT_FOUND` | 确认 `npm install` 且 `@deepseek-ai/*` 只在 peer+dev；重装 |
+| 装的是源码/git 包但没有 `lib/` | `ls <profile>/node_modules/dsh-phone/lib/index.js` 不存在 | 改装 Release tgz，或源码目录先 `npm run build`；git 安装需 `prepare` 且批准构建 |
+
+### 1.1 装了但没入口 / API 404（三步排查）
+
+这是**半安装**的典型表现：profile 有依赖，但 bundle 没被选中；或客户端模块没加载。
+按顺序查，不要先删了重装：
+
+1. **查行与 bundle（Host 侧）**
+
+   ```sh
+   dsh --profile web --dump-config | grep -n -A 8 'dsh-phone'
+   PROFILE="${DSH_HOME:-$HOME/.dsh}/profiles/web/package.json"
+   node -e "const p=require(process.argv[1]); console.log('dependency:', p.dependencies?.['dsh-phone']); console.log('bundles:', p.dsh?.profile?.bundles)" "$PROFILE"
+   ```
+
+   - 有 `dependency` 但 `bundles` 缺 `dsh-phone` → 到 **Plugins 页**启用/重载，或把 `"dsh-phone"`
+     加进 `dsh.profile.bundles`，保存后**重启 DSH**；重跑 `dsh plugin add` 不保证修复（#74）。
+   - 两者都缺 → 安装没成功，按 [install.md](install.md) §1.1 重装 Release tgz。
+
+2. **查包完整性（有无 `lib/`）**
+
+   ```sh
+   ls <profile>/node_modules/dsh-phone/lib/index.js <profile>/node_modules/dsh-phone/lib/client.js
+   ```
+
+   缺 `lib/` = 装到了源码包（没 build 或 `prepare` 未执行）→ 改装 Release tgz，或源码目录 `npm run build` 后重装。
+
+3. **查 API 与浏览器（Host 是否加载、客户端是否入图）**
+
+   ```sh
+   curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/dsh-phone/api/config
+   ```
+
+   - **404**：Host 没加载 `dsh-phone` 行 → 回第 1 步（bundle/重启）；F5 修不了 404。
+   - **401**：路由已注册（未带同源 cookie），说明 Host 正常；工具列表应出现 `phone_*`。
+   - Host 正常但 UI 没入口 → 已是第 3 步后半：**刷新页面（F5）**；仍无则看浏览器 Console 与
+     Network 里 `/plugins/...` 客户端 bundle 是否 404（模块图/构建产物问题，见 [install.md](install.md) §1.3）。
 
 ## 2. 面板/设置页不出现
 
