@@ -52,15 +52,18 @@
 - **动态安装后需刷新页面**（[#48](https://github.com/Thatgfsj/dsh-phone/issues/48)）：安装/更新/启用插件后
   必须刷新浏览器页面（F5）——客户端模块在页面启动时入图，HMR 不会向已打开页面注入新模块；
   刷新不中断会话与手机实例。文档与 SKILL 增加「工具可用但看不到手机入口」的三步排查。
-- **真实 emulator attach 验收**（[#40](https://github.com/Thatgfsj/dsh-phone/issues/40)）：#58 仍在进行中
-  （未合并）；本版本不含真实环境端到端结论，验收矩阵与待办见 [docs/verification.md](docs/verification.md)。
+- **真实 emulator attach 验收已通过**（[#40](https://github.com/Thatgfsj/dsh-phone/issues/40)、
+  [#58](https://github.com/Thatgfsj/dsh-phone/issues/58)）：真实 emulator（720x1280）attach 全链路 PASS——
+  Host WS 10s 收 **102 帧**（config/keyframe/delta，DPH1 合法）、stream 层直连对照 51 帧/5s、
+  控制通道/中文输入（INJECT_TEXT）/截图（PNG 720x1280、775ms）均 PASS；见
+  [docs/verification.md](docs/verification.md) §2 行 10–12 与 §7。emulator 自启（B 分支）与真实浏览器渲染仍待人工。
 - 版本号 `0.1.0` → `0.2.0`（[#51](https://github.com/Thatgfsj/dsh-phone/issues/51)）。
 
 ### 已知限制与未验证项
 
-- **#40 真实环境验收持续中**：#58 未合并前，redroid、真实 emulator、真实设备 attach、scrcpy 实连、
-  `phone_shell` 审批 UI、真实浏览器渲染均未端到端验证；完整矩阵、SKIP 原因与人工待办见
-  [docs/verification.md](docs/verification.md) §4/§5。
+- **#40 部分完成**：真实 emulator attach 与 scrcpy 实连已通过（#58，见 §7）；仍待人工/环境的项：
+  emulator 自启（B 分支，需停用用户 live 实例）、真实浏览器渲染/WebCodecs/TinyH264、redroid（本机无 Docker）、
+  `phone_shell` 审批 UI 点击；完整矩阵、SKIP 原因与人工待办见 [docs/verification.md](docs/verification.md) §2/§4/§5。
 - **平台限制**：Windows/macOS 的 emulator 参数、WSL2 + redroid 属未本机验证路径；redroid 需 Docker + binder。
 - **单实例**：`limits.maxInstances: 1`，所有工具无 serial 参数。
 - **cpuPct/memPct 为尽力而为**：emulator/redroid/attach 各自采样，取不到就省略字段，不阻断 status；

@@ -194,7 +194,7 @@ npm pack --dry-run
 
 - **首版单实例**（`maxInstances: 1`）：工具无 serial 参数，不支持多设备。
 - **安装/更新/启用后需刷新页面**：DSH 不会把动态新增的客户端模块热注入已打开页面（HMR 只更新已加载模块）；工具可用但看不到手机入口时先刷新（F5），刷新不中断会话/手机实例。
-- **#40 真实环境验收持续中**：本机无 Docker、无 emulator 包/AVD、attach 端口不可达。redroid、真实 emulator、真机 attach、scrcpy 实连、审批 UI、真实浏览器渲染仍未端到端验证；#58 未合并前以 [docs/verification.md](docs/verification.md) §4/§5 的 SKIP 与人工待办为准。
+- **#40 部分完成**：真实 emulator attach 与 scrcpy 实连已通过（#58：Host WS 102 帧/10s、控制通道/中文输入/截图 PASS）；仍待人工/环境的项：emulator 自启（B 分支）、真实浏览器渲染/WebCodecs/TinyH264、redroid（本机无 Docker）、审批 UI 点击。详见 [docs/verification.md](docs/verification.md) §2/§7 与 §4/§5 待办。
 - **`cpuPct/memPct` 为尽力而为**：emulator/redroid/attach 各自采样（emulator `/proc`、redroid `docker stats`、attach `dumpsys`），取不到就省略字段，不阻断 status；不要当精确监控。
 - **`phone_screenshot` 的模型图片能力**：仅捕获 `attachments.saveImage` 失败并降级文本，未探测模型路由是否接受图片。
 - **一句话的候选路径/端口探测由操作 Agent 完成**：插件不扫盘，只提供 `/attach/verify` 与单键写入。
