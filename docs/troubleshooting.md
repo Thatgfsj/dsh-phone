@@ -13,7 +13,7 @@ PROFILE="${DSH_HOME:-$HOME/.dsh}/profiles/web/package.json"
 node -e "const p=require(process.argv[1]); console.log('dependency:', p.dependencies?.['dsh-phone']); console.log('bundles:', p.dsh?.profile?.bundles)" "$PROFILE"
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/dsh-phone/api/config   # 404=行未加载，401=已加载
 ls -l <profile>/node_modules/dsh-phone/lib/index.js <profile>/node_modules/dsh-phone/lib/client.js
-node scripts/install-check.mjs --profile web 2>/dev/null || true   # #74 安装自检（若存在）
+node scripts/install-check.mjs --profile web        # #74 安装四项自检（dependency/bundles/dump-config/API）
 ls -l assets/scrcpy-server.jar                  # 可选：懒下载/离线时检查
 ```
 

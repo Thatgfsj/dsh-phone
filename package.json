@@ -58,7 +58,8 @@
     "check": "npm run typecheck && npm run test && npm run lines",
     "verify": "node scripts/verify/verify-all.mjs",
     "lines": "node scripts/check-file-lines.mjs",
-    "prepack": "node scripts/build.mjs"
+    "prepack": "node scripts/build.mjs",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@yume-chan/adb": "^2.6.4",

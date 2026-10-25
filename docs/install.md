@@ -84,10 +84,16 @@ dsh --profile web --dump-config | grep -n -A 8 'dsh-phone'
 | dependency | profile `package.json` 的 `dependencies['dsh-phone']` | 存在（tgz/link 路径） |
 | bundle 选中 | `dsh.profile.bundles` 含 `dsh-phone` | 存在 |
 | 行与配置 | `dsh --profile web --dump-config` | 有 `id: dsh-phone` 行 |
-| Host/API | 重启后 `curl -i http://127.0.0.1:<port>/dsh-phone/api/config` | 401（已加载需认证）或 200；**404 = 行未加载** |
+| Host/API | 重启后 `curl -i http://127.0.0.1:<port>/dsh-phone/api/config`；或 `install-check`（带 Agent token，期望 200） | 401（已加载需认证）或 200；**404 = 行未加载** |
 
-> 仓库/包内若提供 `scripts/install-check.mjs`（#74 安装自检，与 scaffolder PR 配合），优先运行它：
-> `node scripts/install-check.mjs --profile web`（参数以脚本 `--help` 为准），按输出建议修复。
+> 仓库内提供 `scripts/install-check.mjs`（#74 安装自检），按上表四项逐条校验并给出修复建议：
+>
+> ```sh
+> node scripts/install-check.mjs --profile web        # 人读输出
+> node scripts/install-check.mjs --profile web --json # CI 机器可读
+> ```
+>
+> 它只读、不重启 DSH；`api` 检查自动读 `$DSH_HOME/storages/dsh-phone/agent.json` 的 `baseUrl`/token（也可 `--base-url/--token`），DSH 未运行时记为 `SKIP`。
 
 ### 1.3 重启 DSH 与刷新页面（F5）的区别（都需要）
 
@@ -133,6 +139,15 @@ dsh plugin --profile web add .         # 目录安装（link，不复制文件�
 - `scrcpy-server` 已改为**首次使用时懒下载**（#37），无需手工跑脚本；离线/镜像见 §7。
 - **从 git（`github:`）直接安装**：需要包内有构建脚本 `prepare`（#74 起提供）且 profile 批准执行
   构建脚本；未批准时只会得到没有 `lib/` 的源码包 → 半安装。**推荐 Release tgz**。
+  本机实测：`dsh plugin add github:...#<tag>` 会报 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`，按错误里打印的
+  完整 key 在 `$DSH_HOME/profiles/<profile>/pnpm-workspace.yaml` 加 `allowBuilds` 后重跑即可：
+
+  ```yaml
+  allowBuilds:
+    "dsh-phone@https://codeload.github.com/Thatgfsj/dsh-phone/tar.gz/<commit>": true
+  ```
+
+  （key 必须用 pnpm 报错里打印的原文，含 commit；换 tag/分支后 key 会变。）
 - `--profile` 必须写在转发给 pnpm 的参数**之前**（DSH 0.2.1 规则）。
 
 ## 3. 验证阶梯
