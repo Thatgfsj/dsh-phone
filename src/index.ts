@@ -15,6 +15,7 @@ import { Config as PhoneConfigSchema } from './config/schema.ts'
 import type { PhoneConfig } from './config/schema.ts'
 import type { SettingsFacade } from './config/write.ts'
 import type { ConnectionLike } from './http/auth.ts'
+import { safeGetOrigin } from './http/origin.ts'
 import { API_PREFIX, createApiHandler, createReadOnlyHandler } from './http/routes.ts'
 import type { ConfigView } from './http/routes.ts'
 import type { AttachmentsLike } from './phone/contracts.ts'
@@ -149,7 +150,8 @@ export function apply(ctx: Context, config: PhoneConfig): void {
 
     // 本地 Agent 通道 token（SPEC §5.2 步骤 6）：loopback + 无 Origin + token。
     const tokenStore = new AgentTokenStore()
-    const agentReady = tokenStore.prepare(webServer.getOrigin?.() ?? 'http://127.0.0.1')
+    // issue #71：getOrigin() 在 listen 前会抛，必须兜住异常（否则 HTTP/WS 注册一起失败）
+    const agentReady = tokenStore.prepare(safeGetOrigin(webServer))
     void agentReady.catch(() => undefined)
     ctx.effect(() => () => {
       void tokenStore.dispose()

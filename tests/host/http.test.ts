@@ -3,7 +3,8 @@ import { EventEmitter } from 'node:events'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { test } from 'node:test'
 
-import { createApiHandler, createReadOnlyHandler, isValidEndpointString } from '../../src/http/routes.ts'
+import { safeGetOrigin } from '../../src/http/origin.ts'
+import { createApiHandler, createReadOnlyHandler, isValidEndpointString, VERIFY_TTL_MS } from '../../src/http/routes.ts'
 import type { ProvisionRequest, ProvisionStatus, ProvisionerLike } from '../../src/provisioning/types.ts'
 import { RuntimeUnavailableError } from '../../src/runtime/types.ts'
 import type { ConfigView, HttpRouteDeps } from '../../src/http/routes.ts'
@@ -80,6 +81,7 @@ interface Harness {
   view: ConfigView
   connection: { requestRejection(req: IncomingMessage): number | undefined } | undefined
   agentAuth: ((req: IncomingMessage) => boolean) | undefined
+  now: number
   provisioner: ProvisionerLike & {
     requests: ProvisionRequest[]
     nextStatus: ProvisionStatus
@@ -124,6 +126,7 @@ function makeHarness(overrides: Partial<HttpRouteDeps> = {}): Harness {
     connection: { requestRejection: () => undefined },
     verifiedSet: new Set<string>(),
     agentAuth: undefined,
+    now: 1_000_000,
     provisioner: {
       requests: [],
       nextStatus: { state: 'running', step: 'install', percent: 30, log: ['installing'], runtime: 'emulator' },
@@ -144,6 +147,7 @@ function makeHarness(overrides: Partial<HttpRouteDeps> = {}): Harness {
     getConnection: () => harness.connection,
     getConfigView: () => harness.view,
     agentAuth: async (req) => harness.agentAuth?.(req) ?? false,
+    now: () => harness.now,
     async recheckConnectivity() {
       harness.rechecked += 1
       return harness.recheckStatus
@@ -541,29 +545,36 @@ test('POST /config：onboarding 非法值 → 400 E_BAD_REQUEST', async () => {
   assert.equal(harness.settings.calls, 0)
 })
 
-test('本地 Agent 通道允许写 onboarding，但 userHint 仍 403（R2）', async () => {
+test('本地 Agent 通道不得自授权：onboarding.* 与 userHint 均 403（issue #71）', async () => {
   const harness = makeHarness()
   harness.connection = { requestRejection: () => 401 }
   harness.agentAuth = (req) =>
     (req.headers as Record<string, string>)['x-dsh-phone-token'] === 'good-token'
 
-  const onboarding = await invoke(harness, {
+  for (const [path, value] of [
+    [['onboarding', 'status'], 'accepted'],
+    [['onboarding', 'choice'], 'emulator'],
+    [['attach', 'userHint'], '不该被 Agent 写'],
+  ] as const) {
+    const response = await invoke(harness, {
+      method: 'POST',
+      url: '/dsh-phone/api/agent/config',
+      body: { path, value, revision: 5 },
+      headers: { 'x-dsh-phone-token': 'good-token' },
+    })
+    assert.equal(response.statusCode, 403, path.join('.'))
+    assert.equal(json(response).error.code, 'E_FORBIDDEN', path.join('.'))
+  }
+  assert.equal(harness.settings.calls, 0)
+  // 浏览器同源通道仍可写 onboarding（设置页/引导卡片）
+  harness.connection = { requestRejection: () => undefined }
+  const browser = await invoke(harness, {
     method: 'POST',
-    url: '/dsh-phone/api/agent/config',
+    url: '/dsh-phone/api/config',
     body: { path: ['onboarding', 'status'], value: 'accepted', revision: 5 },
-    headers: { 'x-dsh-phone-token': 'good-token' },
   })
-  assert.equal(onboarding.statusCode, 200)
-  assert.equal(json(onboarding).value.onboarding.status, 'accepted')
-
-  const userHint = await invoke(harness, {
-    method: 'POST',
-    url: '/dsh-phone/api/agent/config',
-    body: { path: ['attach', 'userHint'], value: '不该被 Agent 写', revision: 6 },
-    headers: { 'x-dsh-phone-token': 'good-token' },
-  })
-  assert.equal(userHint.statusCode, 403)
-  assert.equal(json(userHint).error.code, 'E_FORBIDDEN')
+  assert.equal(browser.statusCode, 200)
+  assert.equal(json(browser).value.onboarding.status, 'accepted')
 })
 
 test('未知路由 → 404 E_BAD_REQUEST', async () => {
@@ -706,4 +717,105 @@ test('POST /provision：agent token 不被允许（仅浏览器同源；防止 A
   assert.equal(response.statusCode, 401)
   assert.equal(json(response).error.code, 'E_AUTH')
   assert.equal(harness.provisioner.requests.length, 0)
+})
+/* ------------------ issue #71：CAS revision / Agent 读 config / verify 收紧 ------------------ */
+
+test('POST /config 与 /agent/config：缺少 revision → 400 E_BAD_REQUEST（不被静默 LWW）', async () => {
+  const harness = makeHarness()
+  let response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/config',
+    body: { path: ['attach', 'userHint'], value: '没有 revision' },
+  })
+  assert.equal(response.statusCode, 400)
+  assert.equal(json(response).error.code, 'E_BAD_REQUEST')
+
+  harness.connection = { requestRejection: () => 401 }
+  harness.agentAuth = () => true
+  response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/agent/config',
+    body: { path: ['attach', 'resolved'], value: false },
+    headers: { 'x-dsh-phone-token': 'good-token' },
+  })
+  assert.equal(response.statusCode, 400)
+  assert.equal(json(response).error.code, 'E_BAD_REQUEST')
+  assert.equal(harness.settings.calls, 0)
+})
+
+test('Agent token 可读 GET /config（取 revision 做 CAS），仍不能写 onboarding', async () => {
+  const harness = makeHarness()
+  harness.connection = { requestRejection: () => 401 }
+  harness.agentAuth = (req) =>
+    (req.headers as Record<string, string>)['x-dsh-phone-token'] === 'good-token'
+  const config = await invoke(harness, {
+    method: 'GET',
+    url: '/dsh-phone/api/config',
+    headers: { 'x-dsh-phone-token': 'good-token' },
+  })
+  assert.equal(config.statusCode, 200)
+  assert.equal(json(config).value.revision, 5)
+})
+
+test('/attach/verify：只允许 loopback + 端口 ≥1024（防内网端口探测）', async () => {
+  const harness = makeHarness()
+  for (const endpoint of ['10.0.0.1:5555', '192.168.1.2:62001', '127.0.0.1:80', 'example.com:5555']) {
+    const response = await invoke(harness, {
+      method: 'POST',
+      url: '/dsh-phone/api/attach/verify',
+      body: { endpoint },
+    })
+    assert.equal(response.statusCode, 400, endpoint)
+    assert.equal(json(response).error.code, 'E_BAD_REQUEST', endpoint)
+  }
+  for (const endpoint of ['127.0.0.1:5555', 'localhost:5555', '::1:5555']) {
+    const response = await invoke(harness, {
+      method: 'POST',
+      url: '/dsh-phone/api/attach/verify',
+      body: { endpoint },
+    })
+    assert.equal(response.statusCode, 200, endpoint)
+    assert.equal(json(response).value.ok, true, endpoint)
+  }
+})
+
+test('R5 verified 带 TTL：过期后写 endpoint/resolved → 409 E_NOT_VERIFIED', async () => {
+  const harness = makeHarness()
+  let response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/attach/verify',
+    body: { endpoint: '127.0.0.1:5555' },
+  })
+  assert.equal(response.statusCode, 200)
+
+  response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/config',
+    body: { path: ['attach', 'endpoint'], value: '127.0.0.1:5555', revision: 5 },
+  })
+  assert.equal(response.statusCode, 200)
+
+  // 超过 TTL 后，verified 记录过期；resolved=true 必须重新 verify
+  harness.now += VERIFY_TTL_MS + 1
+  response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/config',
+    body: { path: ['attach', 'resolved'], value: true, revision: 6 },
+  })
+  assert.equal(response.statusCode, 409)
+  assert.equal(json(response).error.code, 'E_NOT_VERIFIED')
+})
+
+test('safeGetOrigin：getOrigin 抛异常/缺失/空串 → 回退，不阻断 HTTP/WS 注册', () => {
+  assert.equal(
+    safeGetOrigin({
+      getOrigin() {
+        throw new Error('listen() 之前调用 getOrigin()')
+      },
+    }),
+    'http://127.0.0.1',
+  )
+  assert.equal(safeGetOrigin({}), 'http://127.0.0.1')
+  assert.equal(safeGetOrigin({ getOrigin: () => '' }), 'http://127.0.0.1')
+  assert.equal(safeGetOrigin({ getOrigin: () => 'http://127.0.0.1:3096' }), 'http://127.0.0.1:3096')
 })

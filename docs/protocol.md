@@ -36,12 +36,16 @@
   `onboarding.status`、`onboarding.choice`；其它路径 400 `E_BAD_PATH`。
   这是 R1「定点合并」的在线表达：Host 侧转成 `ctx.settings.mutate('dsh-phone',[{op:'set',path,value}], revision)`。
 - onboarding：`status ∈ pending|accepted|declined`（默认 pending，旧配置无该段也按 pending）；
-  `choice ∈ ''|emulator|redroid|attach`（默认 ''）。浏览器设置页与本地 Agent 通道均可写；
-  本地 Agent 通道仍禁止写 `attach.userHint`（R2，403 `E_FORBIDDEN`）。
+  `choice ∈ ''|emulator|redroid|attach`（默认 ''）。**只能由浏览器同源通道（用户设置页/引导卡片）写**；
+  本地 Agent 通道写 `onboarding.*` 与 `attach.userHint` 均返回 403 `E_FORBIDDEN`（issue #71：
+  防 Agent 自我授权绕过首次使用守卫、防改 runtime）。
 - `GET /screenshot` 在 pending/declined 时返回 200 + JSON `E_ONBOARDING_*`（不启动实例/不截图）。
-- `revision` 必须来自最近一次 `GET /config`；冲突返回 409 `E_CONFIG_CONFLICT`，客户端刷新后重试一次。
+- `revision` **必填**（缺失 → 400 `E_BAD_REQUEST`），必须来自最近一次 `GET /config`；冲突返回
+  409 `E_CONFIG_CONFLICT`，客户端刷新后重试一次。这是 CAS：禁止 last-write-wins（issue #71）。
+  本地 Agent 通道可 `GET /config`（仅读）以取得 revision。
 - `attach/verify` 内部执行 `connect(endpoint,{timeoutMs:3000})` + `getprop ro.product.model`；失败 200 + `ok:false`（便于列出候选），
-  不写配置。R5：只有 verify `ok:true` 才允许随后写 endpoint/resolved。
+  不写配置。**endpoint 只允许 loopback（127.0.0.1/localhost/::1）且端口 ≥1024**（防内网端口探测）。
+  R5：只有 verify `ok:true` 才允许随后写 endpoint/resolved；verified 记录 **TTL 5 分钟**，过期需重新 verify。
 - `screenshot` 走 Agent 截图通道（按需），不做缓存；失败返回 JSON 错误（`image/*` 不适用时）。
 - 不提供 `POST /attach/reset`：重置 `resolved:false` 与清空 userHint 只能由**用户在设置页**触发，
   但走的是同一个 `POST /config`（用户点击 → 写 `resolved:false`）。Agent 工具不调用它。

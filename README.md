@@ -67,17 +67,19 @@ TOKEN=$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.env.H
 curl -sS -X POST "$BASE/dsh-phone/api/attach/verify" -H 'content-type: application/json' \
   -H "x-dsh-phone-token: $TOKEN" -d '{"endpoint":"127.0.0.1:5555"}'
 
-# 2) 单键写入（R1）；resolved=true 前当前 endpoint 必须在同一进程内已验证
+# 2) 取 revision（CAS 必需）；单键写入（R1）；resolved=true 前当前 endpoint 必须在同一进程内已验证（TTL 5min）
+REV=$(curl -sS "$BASE/dsh-phone/api/config" -H "x-dsh-phone-token: $TOKEN" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).value.revision")
 curl -sS -X POST "$BASE/dsh-phone/api/agent/config" -H 'content-type: application/json' \
-  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["attach","endpoint"],"value":"127.0.0.1:5555"}'
+  -H "x-dsh-phone-token: $TOKEN" -d "{\"path\":[\"attach\",\"endpoint\"],\"value\":\"127.0.0.1:5555\",\"revision\":$REV}"
 curl -sS -X POST "$BASE/dsh-phone/api/agent/config" -H 'content-type: application/json' \
-  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["attach","resolved"],"value":true}'
+  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["attach","resolved"],"value":true,"revision":'$(($REV+1))'}'
 
 # 3) 复验（R4b）
 curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 ```
 
-- Agent 通道**禁止**写 `attach.userHint`（403 `E_FORBIDDEN`，R2）——一句话只由用户在设置页修改。
+- Agent 通道**只允许**写 `attach.endpoint` / `attach.resolved`（且 revision 必填）；写 `attach.userHint`
+  或 `onboarding.*` 返回 403 `E_FORBIDDEN`（R2 + 防 Agent 自我授权，issue #71）。onboarding 只能由用户在设置页/引导卡片确认。
 - `attach.resolved == true` 时直接连现有 endpoint（R3），禁止重新探测/重写配置。
 - 面板随时可接管操作；敏感操作（支付确认、发送/删除）前 Agent 应先提示用户。
 
@@ -131,7 +133,7 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 | `GET /status` | 实例状态；onboarding pending/declined → 200 结构化 `E_ONBOARDING_*`（不碰设备） |
 | `GET /config` | 配置快照（含 onboarding）+ settings revision（浏览器/设置页） |
 | `POST /config` | 单键写入（浏览器设置页；支持 attach 三键 + onboarding 两键） |
-| `POST /attach/verify` | 连通验证（connect + `getprop ro.product.model`），不落盘（R5） |
+| `POST /attach/verify` | 连通验证（connect + `getprop ro.product.model`），不落盘（R5）；仅 loopback + 端口 ≥1024 |
 | `POST /agent/config` | 本地 Agent 单键写入（loopback + 无 Origin + `x-dsh-phone-token`） |
 | `GET /screenshot` | 按需单帧 PNG |
 
@@ -147,7 +149,7 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 | **R2 原文保留** | `userHint` 永不规范化/删除；本地 Agent 通道写它返回 403 `E_FORBIDDEN` |
 | **R3 缓存命中** | `resolved=true` 直接连现有 endpoint，不重新探测、不重写配置 |
 | **R4 写后双验证** | 写后 describe 回读比对；写 endpoint/resolved 后再取 `phone_status` 要求 running |
-| **R5 先验证后落盘** | 写 endpoint 前必须 `/attach/verify` 成功（进程内记录），未验证 409 `E_NOT_VERIFIED` |
+| **R5 先验证后落盘** | 写 endpoint 前必须 `/attach/verify` 成功（loopback 且端口 ≥1024；记录 TTL 5 分钟），未验证/过期 409 `E_NOT_VERIFIED` |
 
 ## 错误码摘要
 
