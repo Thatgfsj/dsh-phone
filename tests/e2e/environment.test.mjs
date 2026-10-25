@@ -32,11 +32,11 @@ const REDROID_REASON = docker
   : '本机无 Docker（docker version 失败），redroid 无法启动：需 Docker + binder_linux 模块 + /dev/binder'
 
 const EMULATOR_REASON = emulator
-  ? '本机检测到 emulator 可执行文件，但没有已创建的 AVD 与系统镜像；verify 不自动创建 AVD（会改动模拟器配置，SPEC §6.4 禁止）'
-  : '本机无 Android SDK emulator 包 / AVD（/dev/kvm 存在但无 emulator 二进制），emulator 运行时无法验证'
+  ? '本机已有 emulator + AVD（dsh-phone-avd）；真实链路默认不跑：需显式 DSH_PHONE_E2E=1，且 emulator 自启（B 分支）需停用用户 live 实例，见 scripts/verify/verify-emulator.mjs 与 tests/e2e/real-emulator.test.mjs'
+  : '本机无 Android SDK emulator 包 / AVD，emulator 运行时无法验证'
 
 const SCRCPY_REASON = scrcpyServer
-  ? '检测到 scrcpy-server jar，但没有可用真机/attach 端点，无法 pushServer 并建立 video/control socket'
+  ? 'scrcpy 实连由 scripts/verify/verify-emulator.mjs 在 DSH_PHONE_E2E=1 时覆盖（真实 emulator attach）；默认 verify 不碰设备'
   : '本机无 scrcpy-server jar（node scripts/fetch-scrcpy-server.mjs 可下载），且无真机/可用 attach 端点'
 
 test('真实运行时：redroid（Docker + binder）', { skip: REDROID_REASON }, async () => {

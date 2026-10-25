@@ -78,6 +78,11 @@ await scenario('WS 协议 / DPH1 / 5s 宽限（verify-stream）', 'node', [
 await scenario('临时 profile 安装冒烟（verify-install）', 'node', [
   join('scripts', 'verify', 'verify-install.mjs'),
 ])
+if (process.env.DSH_PHONE_E2E === '1') {
+  await scenario('真实 emulator attach 链路（env-gated）', 'node', [join('scripts', 'verify', 'verify-emulator.mjs')])
+} else {
+  console.log('\n[verify] SKIP 真实 emulator attach 链路：未设置 DSH_PHONE_E2E=1（默认不碰设备）')
+}
 await scenario('单文件行数（≤1000 硬线）', 'node', ['scripts/check-file-lines.mjs'])
 const e2eDir = join(REPO_ROOT, 'tests', 'e2e')
 const e2eFiles = readdirSync(e2eDir)
