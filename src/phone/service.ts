@@ -170,7 +170,14 @@ export const RUNTIME_PROBE_RETRY_MS = 30_000
 /** 运行时探测缓存指纹：runtime 配置 + onboarding.status/choice 任一变化即失效。 */
 export function runtimeConfigFingerprint(config: ServiceConfig): string {
   const onboarding = config.onboarding
-  return [config.runtime, onboarding?.status ?? '', onboarding?.choice ?? ''].join('|')
+  // issue #70：attach.endpoint/resolved 变化必须使 adapter+ADB 缓存失效（否则写新端点不生效）
+  return [
+    config.runtime,
+    onboarding?.status ?? '',
+    onboarding?.choice ?? '',
+    config.attach.endpoint,
+    config.attach.resolved ? '1' : '0',
+  ].join('|')
 }
 
 function parseEndpoint(value: string): Endpoint | undefined {
@@ -278,6 +285,14 @@ export class PhoneService implements PhoneOperations {
 
   async ensureRunning(): Promise<void> {
     this.#assertAlive()
+    // issue #70：runtime/onboarding/attach.endpoint/resolved 任一变化 → 丢弃旧 adapter+ADB，
+    // 强制走启动路径（不得命中下面的 running 快路径）。
+    if (this.#invalidateOnConfigChange()) {
+      await this.#closeSessions()
+      await this.#disconnectAdb()
+      this.#lifecycle.notifyDisconnected('配置变化：重新解析运行时/端点')
+      this.#emitStatus()
+    }
     if (this.#lifecycle.state === 'running') {
       this.#lifecycle.touch()
       return
@@ -630,14 +645,61 @@ export class PhoneService implements PhoneOperations {
     }
   }
 
-  /** 配置变化（runtime 或 onboarding 两叶）→ 丢弃成功 handle 与失败缓存。 */
-  #invalidateOnConfigChange(): void {
+  /**
+   * 配置变化（runtime / onboarding / attach.endpoint / attach.resolved）→
+   * 丢弃成功 handle 与失败缓存；返回是否发生变化。
+   */
+  #invalidateOnConfigChange(): boolean {
     const fingerprint = runtimeConfigFingerprint(this.#deps.config())
-    if (this.#configFingerprint === fingerprint) return
+    if (this.#configFingerprint === fingerprint) return false
     this.#configFingerprint = fingerprint
     this.#handle = undefined
     this.#handleError = undefined
     this.#handleErrorAt = 0
+    return true
+  }
+
+  /**
+   * R4b（issue #70）：配置写完后强制丢弃旧 adapter/ADB，按**当前**配置重连，
+   * 并在**新连接**上执行 getprop 真实验证；失败返回 stopped + lastError，
+   * 由 HTTP 层映射为 502 E_DEVICE_DISCONNECTED（不再假通过）。
+   */
+  async reconnectAndVerify(): Promise<PhoneStatus> {
+    this.#assertAlive()
+    await this.#closeSessions()
+    await this.#disconnectAdb()
+    this.#dropHandle()
+    this.#invalidateOnConfigChange()
+    this.#lifecycle.notifyDisconnected('配置写入后重新连接')
+    this.#emitStatus()
+    try {
+      await this.ensureRunning()
+      const device = this.#requireDevice()
+      // 在新连接上真实执行设备命令，证明不是复用了旧 ADB 连接
+      await device.shell('getprop ro.product.model')
+      return await this.status()
+    } catch (error) {
+      this.#handleError = toError(error)
+      this.#handleErrorAt = this.#now()
+      return this.#degradedStatus(toError(error).message)
+    }
+  }
+
+  /** 失败时的最小状态（避免 status() 再次因探测失败抛错）。 */
+  #degradedStatus(message: string): PhoneStatus {
+    const config = this.#deps.config()
+    const lifecycle = this.#lifecycle.status
+    const status: PhoneStatus = {
+      state: lifecycle.state,
+      runtime: this.#handle?.detection.kind ?? (config.runtime === 'auto' ? 'attach' : config.runtime),
+      platform: this.#handle?.detection.platform ?? this.#platform,
+      lastError: lifecycle.lastError ?? message,
+    }
+    if (config.attach.endpoint) {
+      const endpoint = parseEndpoint(config.attach.endpoint)
+      if (endpoint) status.endpoint = endpoint
+    }
+    return status
   }
 
   /** 丢弃成功 handle（保留失败缓存，以免防抖被绕过）。 */

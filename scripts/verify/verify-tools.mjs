@@ -128,7 +128,12 @@ await runScript(async () => {
       '工具名称/顺序必须与 SPEC §4 一致',
     )
     assertEqual(fake.listeners.length, 1, '必须注册恰好 1 条 tools/pre-execute 审批 handler')
-    assertEqual(fake.effects.length, 10, '1 个 PhoneService effect + 9 个工具 effect')
+    // #65 起多 1 个 Provisioner dispose effect
+    assertEqual(
+      fake.effects.length,
+      11,
+      '1 个 PhoneService effect + 1 个 Provisioner effect + 9 个工具 effect',
+    )
     evidence('registered tools', fake.definitions.map((definition) => definition.name).join(', '))
   })
 

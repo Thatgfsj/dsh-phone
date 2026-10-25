@@ -86,8 +86,10 @@ dsh-phone:
 
 ### 3.2 接入流程（Agent 通道）
 
-R5 验证通过后，用 `POST /dsh-phone/api/agent/config` 单键写 `attach.endpoint` 与 `attach.resolved`；
-不要写 `userHint`（403）。首次使用守卫也走同一通道写 `onboarding.choice` / `onboarding.status`；
+R5 验证通过后，用 `POST /dsh-phone/api/agent/config` 单键写 `attach.endpoint` 与 `attach.resolved`
+（**revision 必填**，先 `GET /config` 取 revision；endpoint 仅 loopback、端口 ≥1024，verify 记录 TTL 5 分钟）。
+Agent 通道**不得**写 `attach.userHint` 或 `onboarding.*`（403 `E_FORBIDDEN`，issue #71 防自我授权）；
+首次使用守卫的同意/选择只能由用户在浏览器设置页/引导卡片完成。
 完整命令见 [usage.md](usage.md) §1.2/§4 与 README「首次接入」。
 
 ### 3.3 首次使用守卫（onboarding，issue #30）

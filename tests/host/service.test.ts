@@ -99,6 +99,7 @@ function makeLifecycle(initial: LifecycleStatusLike['state'] = 'stopped', manual
       lifecycle.touchCalls += 1
     },
     notifyDisconnected(reason) {
+      booted = false
       status = { state: 'stopped', since: 0, lastError: reason }
     },
     onChange(listener) {
@@ -601,4 +602,123 @@ test('视频流/控制通道接线：startStream 收到 AdbConnection 本身，�
   assert.equal(harness.streams[1]!.video, true)
   assert.equal(harness.streams[1]!.adb, connection, '视频会话必须收到 AdbConnection 本身')
   assert.notEqual(harness.streams[1]!.adb, connection.raw, '不得再传 connection.raw')
+})
+/* --------------------- issue #70：attach.endpoint 生效 / R4b 真实验证 --------------------- */
+
+function endpointOf(value: string): { host: string; port: number } {
+  const index = value.lastIndexOf(':')
+  return { host: value.slice(0, index), port: Number(value.slice(index + 1)) }
+}
+
+function makeEndpointHarness(options: {
+  config: ServiceConfig
+  failPorts?: number[]
+}): {
+  harness: ReturnType<typeof makeService>
+  connected: { host: string; port: number }[]
+} {
+  const connected: { host: string; port: number }[] = []
+  const config = options.config
+  const handle: RuntimeHandle = {
+    adapter: {
+      kind: 'attach',
+      probe: async () => ({ ok: true }),
+      ensureRunning: async () => endpointOf(config.attach.endpoint),
+      pause: async () => {},
+      resume: async () => {},
+      stop: async () => {},
+      status: async () => ({
+        kind: 'attach',
+        running: true,
+        paused: false,
+        endpoint: endpointOf(config.attach.endpoint),
+      }),
+    },
+    detection: { kind: 'attach', platform: 'linux' },
+  }
+  const harness = makeService({
+    config: () => config,
+    resolveRuntime: async () => handle,
+    connect: async (endpoint) => {
+      if ((options.failPorts ?? []).includes(endpoint.port)) {
+        throw new Error('connect ECONNREFUSED ' + endpoint.port)
+      }
+      connected.push({ ...endpoint })
+      return {
+        raw: { fake: 'adb' },
+        disconnected: new Promise<void>(() => {}),
+        close: async () => {},
+      }
+    },
+  })
+  return { harness, connected }
+}
+
+test('写新 attach.endpoint 后 ensureRunning 不走 running 快路径：重连新端点', async () => {
+  const config = makeConfig({
+    attach: { endpoint: '127.0.0.1:5555', userHint: '', resolved: true },
+  })
+  const { harness, connected } = makeEndpointHarness({ config })
+  await harness.service.ensureRunning()
+  assert.deepEqual(connected.map((item) => item.port), [5555])
+
+  // 模拟 POST /config 写入新 endpoint（volatile 实时生效）
+  config.attach.endpoint = '127.0.0.1:5557'
+  await harness.service.ensureRunning()
+
+  assert.deepEqual(connected.map((item) => item.port), [5555, 5557], '必须连接新端点')
+  assert.equal(harness.lifecycle.state, 'running')
+  const status = await harness.service.status()
+  assert.equal(status.endpoint?.port, 5557, 'status 必须显示新端点')
+})
+
+test('reconnectAndVerify（R4b）：强制丢弃旧连接 → 连新端点 → 新连接上 getprop 验证', async () => {
+  const config = makeConfig({
+    attach: { endpoint: '127.0.0.1:5555', userHint: '', resolved: true },
+  })
+  const { harness, connected } = makeEndpointHarness({ config })
+  await harness.service.ensureRunning()
+  const disconnectedBefore = harness.disconnected
+
+  config.attach.endpoint = '127.0.0.1:5557'
+  const status = await harness.service.reconnectAndVerify()
+
+  assert.deepEqual(connected.map((item) => item.port), [5555, 5557])
+  assert.ok(harness.disconnected > disconnectedBefore, '旧 ADB 连接必须被断开')
+  assert.ok(
+    harness.calls.includes('shell:getprop ro.product.model'),
+    '必须在新连接上执行 getprop 真实验证',
+  )
+  assert.equal(status.state, 'running')
+  assert.equal(status.endpoint?.port, 5557)
+})
+
+test('reconnectAndVerify：新端点连接失败 → 返回 stopped + lastError（供 HTTP 映射 502，不假通过）', async () => {
+  const config = makeConfig({
+    attach: { endpoint: '127.0.0.1:5555', userHint: '', resolved: true },
+  })
+  const { harness } = makeEndpointHarness({ config, failPorts: [5557] })
+  await harness.service.ensureRunning()
+
+  config.attach.endpoint = '127.0.0.1:5557'
+  const status = await harness.service.reconnectAndVerify()
+  assert.equal(status.state, 'stopped')
+  assert.match(status.lastError ?? '', /ECONNREFUSED|5557/)
+})
+
+test('runtimeConfigFingerprint：attach.endpoint/resolved 变化也计入指纹', async () => {
+  const { runtimeConfigFingerprint } = await import('../../src/phone/service.ts')
+  const base = makeConfig({
+    attach: { endpoint: '127.0.0.1:5555', userHint: '', resolved: true },
+  })
+  const changedEndpoint = {
+    ...base,
+    attach: { ...base.attach, endpoint: '127.0.0.1:5557' },
+  }
+  const changedResolved = {
+    ...base,
+    attach: { ...base.attach, resolved: false },
+  }
+  assert.notEqual(runtimeConfigFingerprint(base), runtimeConfigFingerprint(changedEndpoint))
+  assert.notEqual(runtimeConfigFingerprint(base), runtimeConfigFingerprint(changedResolved))
 })

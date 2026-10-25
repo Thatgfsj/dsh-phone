@@ -61,6 +61,10 @@ Host 不直接读写 `cordis.patch.yml`，不自行实现 runtime/收流；runti
   `onboarding.status` / `onboarding.choice`（issue #30）。其它路径返回 `400 E_BAD_PATH`，不会调用 mutate。
 - **冲突**：revision 不匹配时重新 describe 后用新 revision 重试一次；再次冲突返回
   `409 E_CONFIG_CONFLICT`（retryable=true），由客户端刷新后重试。
+- **R4b 真实验证（issue #70）**：写 `attach.endpoint` / `resolved=true` 成功后，Host 调用
+  `PhoneService.reconnectAndVerify()`：关闭旧流/旧 ADB → 丢弃 adapter 缓存 → 按**当前配置**重连新端点 →
+  在**新连接**上执行 `getprop ro.product.model`；失败返回 stopped + lastError，HTTP 层映射
+  `502 E_DEVICE_DISCONNECTED`（不再用旧连接造成假通过）。
 - **R5 先验证后落盘**：`POST /attach/verify` 成功的 endpoint 才被记入进程内 `verified` 集合；
   写 `attach.endpoint` 或 `resolved=true` 前检查该集合，否则 `409 E_NOT_VERIFIED`。verify 本身不写配置。
 - **R4b 写完复验**：写 endpoint / resolved=true 成功后，路由调用 `service.ensureRunning()`
@@ -156,7 +160,7 @@ activity/window/display/battery/cpuinfo/meminfo/gfxinfo/input/power/wifi。
 |---|---|
 | 探测成功 | `RuntimeHandle` 缓存；后续 status/工具复用，不重复探测 |
 | 探测失败 | **不永久缓存**：错误保留 `RUNTIME_PROBE_RETRY_MS = 30s` 作为最短重探间隔；窗口内 status/工具立即失败（防抖，避免面板轮询打爆 docker/emulator 探测），窗口后下一次调用重新探测 |
-| `runtime` / `onboarding.status` / `onboarding.choice` 变化 | 立即丢弃成功 handle 与失败缓存（volatile 热更新路径，无需重载插件） |
+| `runtime` / `onboarding.status` / `onboarding.choice` / **`attach.endpoint` / `attach.resolved`** 变化 | 立即丢弃成功 handle 与失败缓存，并丢弃旧 ADB 连接，下一次 `ensureRunning` **强制重连新端点**（不得命中 running 快路径；issue #70） |
 | adapter 报告 `running=false && paused=false` 且生命周期为 `stopped` | 丢弃 handle，下一次调用重探 |
 | ADB 断连（`AdbConnection.disconnected`） | 丢弃 handle，下一次调用重探 |
 | `start`/`resume` 失败 | 丢弃 handle（adapter 视为不可用）；不写 30s 失败缓存，下一次调用立即重探 |
@@ -174,9 +178,11 @@ adapter 不可用失效、启动失败立即重探。
 |---|---|
 | GET `/status` | onboarding pending/declined → 200 `{ok:false,error:{code:'E_ONBOARDING_*',...}}`（不碰设备）；accepted → `service.status()`；no-store |
 | GET `/config` | `{enabled, runtime, onboarding:{status,choice}, attach:{endpoint,userHint,resolved}, stream:{maxSize,maxFps,bitrate}, revision}`；`enabled` 来自 Config.enabled（只读、非 volatile，变更需重载）；主 handler 与 enabled=false 的只读 handler 形状一致；revision 来自 settings.describe（缺失 settings → 503 E_NO_WEB） |
-| POST `/config` | body `{path:string[], value, revision?}`；只允许五键（attach 三键 + onboarding 两键）；R5 检查；写后回读 + 复验；成功返回同上 snapshot |
+| POST `/config` | body `{path:string[], value, revision}`（revision 必填）；只允许五键（attach 三键 + onboarding 两键）；R5 检查；写后回读 + 复验；成功返回同上 snapshot |
 | POST `/attach/verify` | body `{endpoint}`；adb connect(timeout 3000) + `getprop ro.product.model`；成功 200 `{ok:true,latencyMs,banner}`，失败 200 `{ok:false,latencyMs,error}`；不落盘 |
 | GET `/screenshot` | `image/png` + no-store；onboarding pending/declined → 200 JSON `E_ONBOARDING_*`；booting → 200 JSON `E_BOOTING`（error.bootMs） |
+| GET `/provision` | `ProvisionStatus`（idle/running/done/failed + step/percent/log/error/runtime）；见 §5.3 |
+| POST `/provision` | body `{runtime, image?}`；**仅浏览器同源**触发一键准备；返回当前 `ProvisionStatus` |
 
 - `enabled=false` 时**只**注册 GET /config（设置页只读）；其余路径 403 `E_NO_WEB`，不注册工具与流。
 - 无 `ctx.connection` → 503 `E_NO_WEB`；`requestRejection` 401 → `E_AUTH`，其它 → `E_ORIGIN`。
@@ -190,16 +196,22 @@ adapter 不可用失效、启动失败立即重探。
 
 - 文件：`$DSH_HOME/storages/dsh-phone/agent.json`（权限 0600；`DSH_HOME` 空则 `~/.dsh`），内容
   `{"token":"<64 hex>","baseUrl":"http://127.0.0.1:<port>"}`；`baseUrl` 取自 `ctx.webServer.getOrigin()`。
-- 路由：`POST /dsh-phone/api/agent/config`，body 与 `POST /config` 相同（`{path,value,revision?}`，
-  允许 `attach.endpoint｜resolved｜userHint` 与 `onboarding.status｜choice`；userHint 仅浏览器可写）。
+- 路由：`POST /dsh-phone/api/agent/config`，body `{path,value,revision}`（**revision 必填**，CAS）；
+  **只允许 `attach.endpoint` / `attach.resolved`**（issue #71）：`onboarding.*` 与 `attach.userHint`
+  仅浏览器同源通道可写，Agent 写它们返回 403 `E_FORBIDDEN`（防 Agent 自我授权/切 runtime）。
+- Agent 可 `GET /dsh-phone/api/config`（仅读）获取 revision，再带 revision 做 CAS 写入。
 - 鉴权：**同时满足** ① `req.socket.remoteAddress` 为 loopback（127/8、::1、::ffff:127/8）；
   ② 无 `Origin` 头；③ `x-dsh-phone-token` 与文件 token 常量时间相等。任一不满足则回退
   `ctx.connection.requestRejection` 的原有校验；token 错误且无同源 cookie → 401 `E_AUTH`。
-  该通道适用于 Agent 闭环的三条路由：`POST /attach/verify`（R5）、`POST /agent/config`（R1/R4）、
-  `GET /status`（R4b）；screenshot 走 `phone_screenshot` 工具而非 HTTP。
-- R5/R4 不因通道变化：未 verify 的 endpoint 仍 409 `E_NOT_VERIFIED`；写后仍 describe 回读 + phone_status 复验。
-- **R2 收口**：`/agent/config` **禁止写 `attach.userHint`**（返回 403 `E_FORBIDDEN`，不落盘）——
-  一句话原文只由用户在设置页修改；浏览器 `POST /config` 仍允许写 userHint。
+  该通道适用于 Agent 闭环的路由：`GET /config`（取 revision）、`POST /attach/verify`（R5）、
+  `POST /agent/config`（R1/R4 CAS）、`GET /status`（R4b）；screenshot 走 `phone_screenshot` 工具而非 HTTP。
+- R5/R4 不因通道变化：未 verify 的 endpoint 仍 409 `E_NOT_VERIFIED`；verified 记录 TTL 5 分钟；
+  endpoint 只允许 loopback 且端口 ≥1024；写后仍 describe 回读 + phone_status 复验。
+- **R2/自授权收口**：`/agent/config` **只允许 attach.endpoint / attach.resolved**；写 `attach.userHint`
+  或 `onboarding.*` 返回 403 `E_FORBIDDEN`（不落盘）。onboarding 只能由用户在浏览器设置页/引导卡片确认。
+- **revision 必填**（issue #71）：缺失返回 400；Agent 先 `GET /config` 取 revision 再写。
+- **getOrigin 容错**：`ctx.webServer.getOrigin()` 在 listen 前会抛，`safeGetOrigin()` 回退
+  `http://127.0.0.1`，避免 HTTP/WS 注册整体失败。
 - 清理：插件 dispose（卸载/重载）时删除 token 文件；重载会生成新 token（旧 token 立即失效）。
 
 Agent 侧标准流程（docs 片段，也写进 README）：
@@ -207,20 +219,43 @@ Agent 侧标准流程（docs 片段，也写进 README）：
 ```sh
 BASE=$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.env.HOME+'/.dsh/storages/dsh-phone/agent.json','utf8')).baseUrl)")
 TOKEN=$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.env.HOME+'/.dsh/storages/dsh-phone/agent.json','utf8')).token)")
-# 1) 先验证（R5，不落盘）；成功才继续
+# 0) 取 revision（CAS 必需）
+REV=$(curl -sS "$BASE/dsh-phone/api/config" -H "x-dsh-phone-token: $TOKEN" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).value.revision")
+# 1) 先验证（R5，不落盘）；endpoint 必须 loopback 且端口 ≥1024
 curl -sS -X POST "$BASE/dsh-phone/api/attach/verify" -H 'content-type: application/json' \
   -H "x-dsh-phone-token: $TOKEN" -d '{"endpoint":"127.0.0.1:5555"}'
-# 2) 写 endpoint 与 resolved（R1 两个单键；会被 R4/R5 校验）
+# 2) 写 endpoint 与 resolved（R1 两个单键；带 revision）
 curl -sS -X POST "$BASE/dsh-phone/api/agent/config" -H 'content-type: application/json' \
-  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["attach","endpoint"],"value":"127.0.0.1:5555"}'
+  -H "x-dsh-phone-token: $TOKEN" -d "{\"path\":[\"attach\",\"endpoint\"],\"value\":\"127.0.0.1:5555\",\"revision\":$REV}"
 curl -sS -X POST "$BASE/dsh-phone/api/agent/config" -H 'content-type: application/json' \
-  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["attach","resolved"],"value":true}'
+  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["attach","resolved"],"value":true,"revision":'$(($REV+1))'}'
 # 3) 复验 phone_status（R4b）
 curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 ```
 
-> 注意：`verify` 成功只记录在进程内 verified 集合；若插件重载，需重新 verify。
+> 注意：`verify` 成功只记录在进程内 verified 集合（TTL 5 分钟）；插件重载或过期后需重新 verify。
+> Agent 通道**不能**写 `onboarding.*`：首次使用守卫的同意/选择必须由用户在浏览器设置页/引导卡片完成。
 > 候选路径/端口探测仍由操作 Agent 的 shell 完成（插件不扫盘，见 §6.1）。
+
+### 5.3 一键准备运行环境（Provisioning，issue #65）
+
+模块：`src/provisioning/{types,commands,service,defaults}.ts`（host scope），HTTP 入口在 `src/http/routes.ts`。
+
+- **状态机**：`idle → running（precheck → locate/install → licenses → avd / verify）→ done|failed`；
+  `log` 保留最近 50 行；`percent` 按阶段估算（install 10–70 / licenses 70–80 / avd 80–100），
+  sdkmanager 输出含百分比时用于校正。
+- **命令白名单**（固定参数，无用户拼接）：
+  `sdkmanager --install emulator <image>`、`sdkmanager --licenses`（stdin 恒 yes）、
+  `avdmanager list avd`、`avdmanager create avd -n dsh-phone-avd -k <image> -d pixel_5 --force`。
+  system image / AVD 名 / 安装包常量复用 `src/runtime/install-guide.ts`（#38 单一数据源）。
+- **安全**：仅浏览器同源请求触发（agent token 显式排除）；15 分钟总超时；磁盘 <3GB 预检失败；
+  只创建/复用 `dsh-phone-avd`，不修改其它 AVD、不装 Docker、不改配置。
+- **幂等/并发**：running 时返回当前状态，不重复执行；done 且同 runtime 直接返回；failed 可重试。
+- **emulator 已装好**：`avdmanager list avd` 已有 `dsh-phone-avd` → 快速 done（不重跑下载）。
+- **redroid**：只检查 `docker version` + `/dev/binder`；缺失 → failed，log 附 `redroidCommands()` 手动命令。
+- **attach**：只调 `PhoneService.verifyEndpoint` 校验当前 endpoint（不落盘）；空 endpoint → failed。
+- 进程清理：命令通过 runtime `CommandRunner.run` 执行（`execFile` + `timeoutMs`，超时 SIGKILL）；
+  未做进程组级 kill（见 §7 未验证项）。
 
 ### 5.2 Host 层错误码映射
 
@@ -287,6 +322,9 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
    形态（IPv4-mapped 等），也未验证卸载后 token 文件确实被删除。
 9. **`x-dsh-phone-token` 与同源 cookie 并存**：token 缺失但同源 cookie 有效时走普通 requestRejection
    分支放行（与浏览器 `POST /config` 等价），该分支只做了单测。
+11. **Provisioning 真机端到端**：`sdkmanager` 下载/许可/AVD 创建只用假 CommandRunner 单测覆盖；
+    本机未执行真实下载（~1.7GB 网络安装）与 `sdkmanager --licenses` 交互，也未验证命令超时后的
+    进程组清理（`execFile` 只 SIGKILL 直接子进程；sdkmanager 的 java 子进程可能残留）。
 10. **onboarding 的真实交互闭环**：工具/HTTP 的 pending/declined/accepted 分支与配置写入均有单测，
     但未在真实设备上验证「Agent 询问 → 用户答复 → 写 accepted → 首次启动成功」的全流程；
     设置页引导卡片属 #31（client），其真实 UI 也未验证。
@@ -314,3 +352,4 @@ Host 单测（`tests/host/`，不依赖真机）：
 | `shell-policy.test.ts` | 注册级：tools/pre-execute 捕获并断言白名单 next / 非白名单 ask |
 | `onboarding.test.ts` | pending/declined/accepted 守卫、step/options/install/docs 结构、effectiveRuntime、旧配置 normalize |
 | `wiring.test.ts` | `readOnboarding` 与 `readServiceConfig`：accepted+choice 等价显式 runtime、pending 仍 auto |
+| `provision.test.ts` | 假 CommandRunner：emulator 成功/已装快速 done/aosp_atd 镜像/磁盘不足/断网/许可失败/AVD 创建失败/重复/并发/超时/redroid/attach/进度；命令构建器与 locateSdkTools |

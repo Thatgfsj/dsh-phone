@@ -15,11 +15,15 @@ import { Config as PhoneConfigSchema } from './config/schema.ts'
 import type { PhoneConfig } from './config/schema.ts'
 import type { SettingsFacade } from './config/write.ts'
 import type { ConnectionLike } from './http/auth.ts'
+import { safeGetOrigin } from './http/origin.ts'
 import { API_PREFIX, createApiHandler, createReadOnlyHandler } from './http/routes.ts'
 import type { ConfigView } from './http/routes.ts'
 import type { AttachmentsLike } from './phone/contracts.ts'
 import type { PhoneService } from './phone/service.ts'
 import { createPhoneService, readOnboarding } from './phone/wiring.ts'
+import { createProvisioner } from './provisioning/defaults.ts'
+import { createCommandRunner } from './runtime/command.ts'
+import { createSystemEnvironment } from './runtime/probe.ts'
 import type { PhoneStreamService, StreamConnectionFence } from './stream/index.ts'
 import { createStreamUpgradeRoute } from './stream/index.ts'
 import type { ToolHostLike } from './tools/common.ts'
@@ -120,6 +124,15 @@ export function apply(ctx: Context, config: PhoneConfig): void {
   const service: PhoneService = createPhoneService(config)
   ctx.effect(() => () => void service.dispose())
 
+  // 一键准备运行环境（issue #65）：懒执行，只有用户点击 POST /provision 才会跑命令
+  const provisioner = createProvisioner({
+    env: createSystemEnvironment(),
+    runner: createCommandRunner(),
+    verifyEndpoint: (endpoint) => service.verifyEndpoint(endpoint),
+    getAttachEndpoint: () => config.attach.endpoint.get(),
+  })
+  ctx.effect(() => () => provisioner.dispose())
+
   // 3) tools + phone_shell 审批（非白名单命令走 ask，SPEC §6.3）
   const attachments = (): AttachmentsLike | undefined =>
     ctx.get('attachments') as AttachmentsLike | undefined
@@ -137,7 +150,8 @@ export function apply(ctx: Context, config: PhoneConfig): void {
 
     // 本地 Agent 通道 token（SPEC §5.2 步骤 6）：loopback + 无 Origin + token。
     const tokenStore = new AgentTokenStore()
-    const agentReady = tokenStore.prepare(webServer.getOrigin?.() ?? 'http://127.0.0.1')
+    // issue #71：getOrigin() 在 listen 前会抛，必须兜住异常（否则 HTTP/WS 注册一起失败）
+    const agentReady = tokenStore.prepare(safeGetOrigin(webServer))
     void agentReady.catch(() => undefined)
     ctx.effect(() => () => {
       void tokenStore.dispose()
@@ -145,6 +159,7 @@ export function apply(ctx: Context, config: PhoneConfig): void {
 
     const api = createApiHandler({
       service,
+      provisioner,
       getSettings: () => ctx.get('settings') as SettingsFacade | undefined,
       getConnection: () => ctx.get('connection') as ConnectionLike | undefined,
       getConfigView: () => configView(config),
@@ -152,10 +167,8 @@ export function apply(ctx: Context, config: PhoneConfig): void {
         await agentReady.catch(() => undefined)
         return tokenStore.verifyRequest(req)
       },
-      recheckConnectivity: async () => {
-        await service.ensureRunning()
-        return service.status()
-      },
+      // issue #70：R4b 必须在新连接上 verify（重连 + getprop），不能复用旧连接
+      recheckConnectivity: () => service.reconnectAndVerify(),
     })
     webCtx.effect(() =>
       webServer.register({

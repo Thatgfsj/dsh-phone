@@ -27,6 +27,11 @@ import {
 import type { OnboardingState, OnboardingToolFailure } from '../config/onboarding.ts'
 import type { SettingsFacade } from '../config/write.ts'
 import type { PhoneOperations, PhoneStatus } from '../phone/contracts.ts'
+import {
+  isProvisionImage,
+  isProvisionRuntime,
+} from '../provisioning/types.ts'
+import type { ProvisionerLike } from '../provisioning/types.ts'
 import { RuntimeUnavailableError } from '../runtime/types.ts'
 import { rejectionFor, sendRejection } from './auth.ts'
 import type { ConnectionLike } from './auth.ts'
@@ -55,6 +60,8 @@ export interface ConfigSnapshot {
 
 export interface HttpRouteDeps {
   service: PhoneOperations
+  /** 一键准备运行环境（issue #65）；仅浏览器同源请求可触发。 */
+  provisioner: ProvisionerLike
   /**
    * 本地 Agent 通道鉴权（POST /agent/config）：loopback + 无 Origin + token 匹配。
    * 返回 true 时绕过 ctx.connection.requestRejection；否则仍走原有校验。
@@ -66,6 +73,8 @@ export interface HttpRouteDeps {
   getConfigView(): ConfigView
   /** R4b：写 endpoint/resolved 后重新拉起并确认 phone_status=running。 */
   recheckConnectivity(): Promise<PhoneStatus>
+  /** 可注入时钟（verified TTL 单测；默认 Date.now）。 */
+  now?(): number
 }
 
 export interface HttpRouteHandler {
@@ -73,6 +82,24 @@ export interface HttpRouteHandler {
 }
 
 const ENDPOINT_PATTERN = /^([A-Za-z0-9._:[\]-]+):(\d{1,5})$/
+
+/** R5 verify 结果的有效期（issue #71）：过期后需重新 verify。 */
+export const VERIFY_TTL_MS = 5 * 60_000
+
+/** Agent 通道允许写入的 key（issue #71：不得自授权 onboarding、不得改 userHint）。 */
+export const AGENT_WRITABLE_PATHS: readonly string[] = ['attach.endpoint', 'attach.resolved']
+
+/** attach 端点只允许 loopback + 非特权端口（防止 token 持有者做内网端口探测）。 */
+export function isLoopbackEndpointString(value: unknown): value is string {
+  if (!isValidEndpointString(value)) return false
+  const trimmed = value.trim()
+  const index = trimmed.lastIndexOf(':')
+  const host = trimmed.slice(0, index).toLowerCase()
+  const port = Number(trimmed.slice(index + 1))
+  const loopback =
+    host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]'
+  return loopback && port >= 1024
+}
 
 /** 校验 `host:port` 端点字符串（端口 1–65535）。 */
 export function isValidEndpointString(value: unknown): value is string {
@@ -170,14 +197,27 @@ function toApiError(error: unknown): ApiError {
 }
 
 export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
-  /** R5：本进程内通过 /attach/verify 实际连通验证过的端点（不落盘）。 */
-  const verified = new Set<string>()
+  /** R5：本进程内通过 /attach/verify 连通验证过的端点 → 过期时间（带 TTL，issue #71）。 */
+  const verified = new Map<string, number>()
+  const now = (): number => deps.now?.() ?? Date.now()
+  const isVerified = (endpoint: string): boolean => {
+    const expiresAt = verified.get(endpoint)
+    return expiresAt !== undefined && expiresAt > now()
+  }
 
   async function handleVerify(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = asRecord(await readJsonBody(req))
     const endpoint = body.endpoint
     if (!isValidEndpointString(endpoint)) {
       throw new ApiError(400, 'E_BAD_REQUEST', 'endpoint 必须是 host:port，如 127.0.0.1:5555')
+    }
+    if (!isLoopbackEndpointString(endpoint)) {
+      throw new ApiError(
+        400,
+        'E_BAD_REQUEST',
+        'attach.endpoint 只允许 loopback（127.0.0.1/localhost/::1）且端口 ≥1024；' +
+          '插件只连接本机 adb（禁止内网端口探测）',
+      )
     }
     let result
     try {
@@ -189,7 +229,7 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
         error: error instanceof Error ? error.message : String(error),
       }
     }
-    if (result.ok) verified.add(endpoint)
+    if (result.ok) verified.set(endpoint, now() + VERIFY_TTL_MS)
     else verified.delete(endpoint)
     sendSuccess(res, result)
   }
@@ -216,12 +256,13 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
         '不允许写入 ' + pathKey(path) + '；只允许 attach.endpoint / attach.resolved / attach.userHint',
       )
     }
-    // SPEC §6.2 R2：userHint 原文只由用户在设置页修改；本地 Agent 通道禁止写。
-    if (options.viaAgent === true && pathKey(path) === 'attach.userHint') {
+    // issue #71：Agent 通道不得自授权（onboarding.*）、不得改 userHint（R2）；只允许 endpoint/resolved。
+    if (options.viaAgent === true && !AGENT_WRITABLE_PATHS.includes(pathKey(path))) {
       throw new ApiError(
         403,
         'E_FORBIDDEN',
-        '本地 Agent 通道不得修改 attach.userHint（SPEC §6.2 R2：一句话只由用户在设置页修改）',
+        '本地 Agent 通道只允许写 attach.endpoint / attach.resolved；' +
+          pathKey(path) + ' 只能由浏览器同源通道（用户设置页）写入',
       )
     }
     if (!('value' in body)) {
@@ -244,8 +285,16 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
         'onboarding.choice 必须是空串/emulator/redroid/attach',
       )
     }
+    // issue #71：revision 必填（CAS）；缺失即拒绝，避免 last-write-wins 绕过并发保护。
     const revision = body.revision
-    if (revision !== undefined && (typeof revision !== 'number' || !Number.isInteger(revision))) {
+    if (revision === undefined) {
+      throw new ApiError(
+        400,
+        'E_BAD_REQUEST',
+        '缺少 revision：请先 GET /dsh-phone/api/config 取 revision，再带 revision 写入（CAS）',
+      )
+    }
+    if (typeof revision !== 'number' || !Number.isInteger(revision)) {
       throw new ApiError(400, 'E_BAD_REQUEST', 'revision 必须是整数')
     }
 
@@ -256,7 +305,10 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
       if (!isValidEndpointString(body.value)) {
         throw new ApiError(400, 'E_BAD_REQUEST', 'attach.endpoint 必须是 host:port')
       }
-      if (!verified.has(body.value)) {
+      if (!isLoopbackEndpointString(body.value)) {
+        throw new ApiError(400, 'E_BAD_REQUEST', 'attach.endpoint 只允许 loopback 且端口 ≥1024')
+      }
+      if (!isVerified(body.value)) {
         throw new ApiError(
           409,
           'E_NOT_VERIFIED',
@@ -265,7 +317,10 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
       }
     }
     if (key === 'attach.resolved' && body.value === true) {
-      if (!isValidEndpointString(current.attach.endpoint) || !verified.has(current.attach.endpoint)) {
+      if (
+        !isValidEndpointString(current.attach.endpoint) ||
+        !isVerified(current.attach.endpoint)
+      ) {
         throw new ApiError(
           409,
           'E_NOT_VERIFIED',
@@ -304,6 +359,21 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
     return onboardingFailure(deps.getConfigView().onboarding)
   }
 
+  async function handleProvision(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = asRecord(await readJsonBody(req))
+    if (!isProvisionRuntime(body.runtime)) {
+      throw new ApiError(400, 'E_BAD_REQUEST', 'runtime 必须是 emulator/redroid/attach')
+    }
+    if (body.image !== undefined && !isProvisionImage(body.image)) {
+      throw new ApiError(400, 'E_BAD_REQUEST', 'image 必须是 google_apis/aosp_atd')
+    }
+    const status = deps.provisioner.start({
+      runtime: body.runtime,
+      ...(body.image === undefined ? {} : { image: body.image }),
+    })
+    sendSuccess(res, status)
+  }
+
   async function handleScreenshot(res: ServerResponse): Promise<void> {
     // issue #30：首次使用守卫优先，不触发懒启动/截图
     const blocked = onboardingGuard()
@@ -332,7 +402,9 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
       const agentEligible =
         isAgentConfig ||
         (method === 'POST' && rawPath === '/attach/verify') ||
-        (method === 'GET' && rawPath === '/status')
+        (method === 'GET' && rawPath === '/status') ||
+        // issue #71：Agent 需要读 revision 才能做 CAS 写入
+        (method === 'GET' && rawPath === '/config')
 
       const rejection = rejectionFor(deps.getConnection(), req)
       if (rejection) {
@@ -369,6 +441,14 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
       }
       if (method === 'POST' && rawPath === '/attach/verify') {
         await handleVerify(req, res)
+        return
+      }
+      if (method === 'GET' && rawPath === '/provision') {
+        sendSuccess(res, deps.provisioner.status())
+        return
+      }
+      if (method === 'POST' && rawPath === '/provision') {
+        await handleProvision(req, res)
         return
       }
       if (method === 'GET' && rawPath === '/screenshot') {

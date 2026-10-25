@@ -11,6 +11,8 @@
 import type * as ReactNamespace from 'react'
 import type { Translate } from './i18n.ts'
 import { createOnboardingCard } from './onboarding.ts'
+import { createFetchProvisionApi } from './provision-api.ts'
+import type { ProvisionApi } from './provision-api.ts'
 import type { ConfigApi, PhoneConfigView } from './settings-api.ts'
 
 export type EmptyGate = 'pending' | 'declined' | 'unavailable'
@@ -52,6 +54,8 @@ export function describeEmptyState(gate: EmptyGate, t: Translate, message?: stri
 export interface EmptyStateDeps {
   React: typeof ReactNamespace
   t: Translate
+  /** Injectable provisioning API (tests/embedding). */
+  provisionApi?: ProvisionApi
 }
 
 export interface PanelEmptyStateProps {
@@ -69,6 +73,7 @@ export function createPanelEmptyState(deps: EmptyStateDeps): ReactNamespace.Comp
   const { React, t } = deps
   const h = React.createElement
   const OnboardingCard = createOnboardingCard({ React, t })
+  const provisionApi = deps.provisionApi ?? createFetchProvisionApi()
 
   function PanelEmptyState(props: PanelEmptyStateProps): ReactNamespace.ReactElement {
     const { gate, config, api, reload, onConfig, onRetry, errorMessage } = props
@@ -92,6 +97,7 @@ export function createPanelEmptyState(deps: EmptyStateDeps): ReactNamespace.Comp
       showCard
         ? h(OnboardingCard, {
             api,
+            provisionApi,
             config,
             reload,
             onConfig: (next: PhoneConfigView) => {

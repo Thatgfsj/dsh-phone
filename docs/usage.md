@@ -32,19 +32,11 @@
    - **redroid（Linux + Docker）**：需 Docker Engine 与 `binder_linux`（`/dev/binder`）；冷启动 8–15s；
      首次会拉取 `redroid/redroid:14-latest` 镜像（体积取决于镜像，未在本机验证）。
    - **attach（任意平台）**：连接用户已有的模拟器/真机，无需安装；需提供 adb TCP 端点。
-3. **等用户明确答复后**才写配置（本地 token 通道，单键；见 §5）：
-```sh
-# 选择某种方式：先写 choice，再写 status=accepted
-curl -sS -X POST "$BASE/dsh-phone/api/agent/config" -H 'content-type: application/json' \
-  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["onboarding","choice"],"value":"emulator"}'
-curl -sS -X POST "$BASE/dsh-phone/api/agent/config" -H 'content-type: application/json' \
-  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["onboarding","status"],"value":"accepted"}'
-# 用户拒绝：只写 declined，然后停止（后续工具会返回 E_ONBOARDING_DECLINED）
-curl -sS -X POST "$BASE/dsh-phone/api/agent/config" -H 'content-type: application/json' \
-  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["onboarding","status"],"value":"declined"}'
-```
-   也可让用户在「设置 → 手机」的首次使用卡片里自行选择。
-4. **写入后再开始操作**：再次 `phone_status` 应进入正常状态机（stopped/booting/running）。
+3. **等用户明确答复后，由用户在浏览器里确认**（issue #71 后 Agent 通道不能写 onboarding，防自我授权）：
+   请用户打开「设置 → 手机」的首次使用卡片，选择接入方式（emulator/redroid/attach/暂不使用）并确认；
+   用户同意浏览器会写 `onboarding.choice` + `onboarding.status=accepted`（拒绝写 `declined`）。
+   Agent 本地 token 通道写 `onboarding.*` 会返回 403 `E_FORBIDDEN`，**不要尝试**。
+4. **用户确认后再开始操作**：再次 `phone_status` 应进入正常状态机（stopped/booting/running）。
 5. **用户拒绝时**：写入 `declined`（或用户不想写就保持 pending）后停下，说明「可随时在设置页重新启用」，
    不要反复调用工具、不要试图绕过守卫。
 
