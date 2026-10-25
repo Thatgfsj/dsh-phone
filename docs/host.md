@@ -173,6 +173,8 @@ adapter 不可用失效、启动失败立即重探。
 | POST `/config` | body `{path:string[], value, revision?}`；只允许五键（attach 三键 + onboarding 两键）；R5 检查；写后回读 + 复验；成功返回同上 snapshot |
 | POST `/attach/verify` | body `{endpoint}`；adb connect(timeout 3000) + `getprop ro.product.model`；成功 200 `{ok:true,latencyMs,banner}`，失败 200 `{ok:false,latencyMs,error}`；不落盘 |
 | GET `/screenshot` | `image/png` + no-store；onboarding pending/declined → 200 JSON `E_ONBOARDING_*`；booting → 200 JSON `E_BOOTING`（error.bootMs） |
+| GET `/provision` | `ProvisionStatus`（idle/running/done/failed + step/percent/log/error/runtime）；见 §5.3 |
+| POST `/provision` | body `{runtime, image?}`；**仅浏览器同源**触发一键准备；返回当前 `ProvisionStatus` |
 
 - `enabled=false` 时**只**注册 GET /config（设置页只读）；其余路径 403 `E_NO_WEB`，不注册工具与流。
 - 无 `ctx.connection` → 503 `E_NO_WEB`；`requestRejection` 401 → `E_AUTH`，其它 → `E_ORIGIN`。
@@ -217,6 +219,26 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 
 > 注意：`verify` 成功只记录在进程内 verified 集合；若插件重载，需重新 verify。
 > 候选路径/端口探测仍由操作 Agent 的 shell 完成（插件不扫盘，见 §6.1）。
+
+### 5.3 一键准备运行环境（Provisioning，issue #65）
+
+模块：`src/provisioning/{types,commands,service,defaults}.ts`（host scope），HTTP 入口在 `src/http/routes.ts`。
+
+- **状态机**：`idle → running（precheck → locate/install → licenses → avd / verify）→ done|failed`；
+  `log` 保留最近 50 行；`percent` 按阶段估算（install 10–70 / licenses 70–80 / avd 80–100），
+  sdkmanager 输出含百分比时用于校正。
+- **命令白名单**（固定参数，无用户拼接）：
+  `sdkmanager --install emulator <image>`、`sdkmanager --licenses`（stdin 恒 yes）、
+  `avdmanager list avd`、`avdmanager create avd -n dsh-phone-avd -k <image> -d pixel_5 --force`。
+  system image / AVD 名 / 安装包常量复用 `src/runtime/install-guide.ts`（#38 单一数据源）。
+- **安全**：仅浏览器同源请求触发（agent token 显式排除）；15 分钟总超时；磁盘 <3GB 预检失败；
+  只创建/复用 `dsh-phone-avd`，不修改其它 AVD、不装 Docker、不改配置。
+- **幂等/并发**：running 时返回当前状态，不重复执行；done 且同 runtime 直接返回；failed 可重试。
+- **emulator 已装好**：`avdmanager list avd` 已有 `dsh-phone-avd` → 快速 done（不重跑下载）。
+- **redroid**：只检查 `docker version` + `/dev/binder`；缺失 → failed，log 附 `redroidCommands()` 手动命令。
+- **attach**：只调 `PhoneService.verifyEndpoint` 校验当前 endpoint（不落盘）；空 endpoint → failed。
+- 进程清理：命令通过 runtime `CommandRunner.run` 执行（`execFile` + `timeoutMs`，超时 SIGKILL）；
+  未做进程组级 kill（见 §7 未验证项）。
 
 ### 5.2 Host 层错误码映射
 
@@ -283,6 +305,9 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
    形态（IPv4-mapped 等），也未验证卸载后 token 文件确实被删除。
 9. **`x-dsh-phone-token` 与同源 cookie 并存**：token 缺失但同源 cookie 有效时走普通 requestRejection
    分支放行（与浏览器 `POST /config` 等价），该分支只做了单测。
+11. **Provisioning 真机端到端**：`sdkmanager` 下载/许可/AVD 创建只用假 CommandRunner 单测覆盖；
+    本机未执行真实下载（~1.7GB 网络安装）与 `sdkmanager --licenses` 交互，也未验证命令超时后的
+    进程组清理（`execFile` 只 SIGKILL 直接子进程；sdkmanager 的 java 子进程可能残留）。
 10. **onboarding 的真实交互闭环**：工具/HTTP 的 pending/declined/accepted 分支与配置写入均有单测，
     但未在真实设备上验证「Agent 询问 → 用户答复 → 写 accepted → 首次启动成功」的全流程；
     设置页引导卡片属 #31（client），其真实 UI 也未验证。
@@ -310,3 +335,4 @@ Host 单测（`tests/host/`，不依赖真机）：
 | `shell-policy.test.ts` | 注册级：tools/pre-execute 捕获并断言白名单 next / 非白名单 ask |
 | `onboarding.test.ts` | pending/declined/accepted 守卫、step/options/install/docs 结构、effectiveRuntime、旧配置 normalize |
 | `wiring.test.ts` | `readOnboarding` 与 `readServiceConfig`：accepted+choice 等价显式 runtime、pending 仍 auto |
+| `provision.test.ts` | 假 CommandRunner：emulator 成功/已装快速 done/aosp_atd 镜像/磁盘不足/断网/许可失败/AVD 创建失败/重复/并发/超时/redroid/attach/进度；命令构建器与 locateSdkTools |

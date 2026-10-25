@@ -27,6 +27,11 @@ import {
 import type { OnboardingState, OnboardingToolFailure } from '../config/onboarding.ts'
 import type { SettingsFacade } from '../config/write.ts'
 import type { PhoneOperations, PhoneStatus } from '../phone/contracts.ts'
+import {
+  isProvisionImage,
+  isProvisionRuntime,
+} from '../provisioning/types.ts'
+import type { ProvisionerLike } from '../provisioning/types.ts'
 import { RuntimeUnavailableError } from '../runtime/types.ts'
 import { rejectionFor, sendRejection } from './auth.ts'
 import type { ConnectionLike } from './auth.ts'
@@ -55,6 +60,8 @@ export interface ConfigSnapshot {
 
 export interface HttpRouteDeps {
   service: PhoneOperations
+  /** 一键准备运行环境（issue #65）；仅浏览器同源请求可触发。 */
+  provisioner: ProvisionerLike
   /**
    * 本地 Agent 通道鉴权（POST /agent/config）：loopback + 无 Origin + token 匹配。
    * 返回 true 时绕过 ctx.connection.requestRejection；否则仍走原有校验。
@@ -304,6 +311,21 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
     return onboardingFailure(deps.getConfigView().onboarding)
   }
 
+  async function handleProvision(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = asRecord(await readJsonBody(req))
+    if (!isProvisionRuntime(body.runtime)) {
+      throw new ApiError(400, 'E_BAD_REQUEST', 'runtime 必须是 emulator/redroid/attach')
+    }
+    if (body.image !== undefined && !isProvisionImage(body.image)) {
+      throw new ApiError(400, 'E_BAD_REQUEST', 'image 必须是 google_apis/aosp_atd')
+    }
+    const status = deps.provisioner.start({
+      runtime: body.runtime,
+      ...(body.image === undefined ? {} : { image: body.image }),
+    })
+    sendSuccess(res, status)
+  }
+
   async function handleScreenshot(res: ServerResponse): Promise<void> {
     // issue #30：首次使用守卫优先，不触发懒启动/截图
     const blocked = onboardingGuard()
@@ -369,6 +391,14 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
       }
       if (method === 'POST' && rawPath === '/attach/verify') {
         await handleVerify(req, res)
+        return
+      }
+      if (method === 'GET' && rawPath === '/provision') {
+        sendSuccess(res, deps.provisioner.status())
+        return
+      }
+      if (method === 'POST' && rawPath === '/provision') {
+        await handleProvision(req, res)
         return
       }
       if (method === 'GET' && rawPath === '/screenshot') {

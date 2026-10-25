@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { test } from 'node:test'
 
 import { createApiHandler, createReadOnlyHandler, isValidEndpointString } from '../../src/http/routes.ts'
+import type { ProvisionRequest, ProvisionStatus, ProvisionerLike } from '../../src/provisioning/types.ts'
 import { RuntimeUnavailableError } from '../../src/runtime/types.ts'
 import type { ConfigView, HttpRouteDeps } from '../../src/http/routes.ts'
 import type { PhoneStatus } from '../../src/phone/contracts.ts'
@@ -79,6 +80,10 @@ interface Harness {
   view: ConfigView
   connection: { requestRejection(req: IncomingMessage): number | undefined } | undefined
   agentAuth: ((req: IncomingMessage) => boolean) | undefined
+  provisioner: ProvisionerLike & {
+    requests: ProvisionRequest[]
+    nextStatus: ProvisionStatus
+  }
 }
 
 function makeHarness(overrides: Partial<HttpRouteDeps> = {}): Harness {
@@ -119,9 +124,22 @@ function makeHarness(overrides: Partial<HttpRouteDeps> = {}): Harness {
     connection: { requestRejection: () => undefined },
     verifiedSet: new Set<string>(),
     agentAuth: undefined,
+    provisioner: {
+      requests: [],
+      nextStatus: { state: 'running', step: 'install', percent: 30, log: ['installing'], runtime: 'emulator' },
+      status() {
+        return harness.provisioner.nextStatus
+      },
+      start(request: ProvisionRequest) {
+        harness.provisioner.requests.push(request)
+        return harness.provisioner.nextStatus
+      },
+      dispose() {},
+    },
   } as unknown as Harness
   harness.handler = createApiHandler({
     service,
+    provisioner: harness.provisioner,
     getSettings: () => settings,
     getConnection: () => harness.connection,
     getConfigView: () => harness.view,
@@ -619,4 +637,73 @@ test('GET /config（只读 handler）：enabled=false 时仍可读，且不改�
   assert.equal(json(response).ok, true)
   assert.equal(json(response).value.enabled, false)
   assert.equal(response.headers['cache-control'], 'no-store')
+})
+/* ------------------------- issue #65：Provisioning API ------------------------- */
+
+test('GET /provision：返回当前状态（200 + 稳定字段）', async () => {
+  const harness = makeHarness()
+  harness.provisioner.nextStatus = {
+    state: 'done',
+    step: 'done',
+    percent: 100,
+    log: ['准备完成'],
+    runtime: 'emulator',
+  }
+  const response = await invoke(harness, { method: 'GET', url: '/dsh-phone/api/provision' })
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(json(response).value, {
+    state: 'done',
+    step: 'done',
+    percent: 100,
+    log: ['准备完成'],
+    runtime: 'emulator',
+  })
+  assert.equal(response.headers['cache-control'], 'no-store')
+})
+
+test('POST /provision：浏览器同源请求触发 provisioner.start（runtime+image 透传）', async () => {
+  const harness = makeHarness()
+  const response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/provision',
+    body: { runtime: 'emulator', image: 'aosp_atd' },
+  })
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(harness.provisioner.requests, [{ runtime: 'emulator', image: 'aosp_atd' }])
+  assert.equal(json(response).value.state, 'running')
+})
+
+test('POST /provision：非法 runtime/image → 400 E_BAD_REQUEST（不触发 provisioner）', async () => {
+  const harness = makeHarness()
+  let response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/provision',
+    body: { runtime: 'waydroid' },
+  })
+  assert.equal(response.statusCode, 400)
+  assert.equal(json(response).error.code, 'E_BAD_REQUEST')
+
+  response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/provision',
+    body: { runtime: 'emulator', image: 'pixel' },
+  })
+  assert.equal(response.statusCode, 400)
+  assert.equal(json(response).error.code, 'E_BAD_REQUEST')
+  assert.equal(harness.provisioner.requests.length, 0)
+})
+
+test('POST /provision：agent token 不被允许（仅浏览器同源；防止 Agent 自动装软件）', async () => {
+  const harness = makeHarness()
+  harness.connection = { requestRejection: () => 401 }
+  harness.agentAuth = () => true
+  const response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/provision',
+    body: { runtime: 'emulator' },
+    headers: { 'x-dsh-phone-token': 'good-token' },
+  })
+  assert.equal(response.statusCode, 401)
+  assert.equal(json(response).error.code, 'E_AUTH')
+  assert.equal(harness.provisioner.requests.length, 0)
 })
