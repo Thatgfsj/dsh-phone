@@ -188,16 +188,22 @@ adapter 不可用失效、启动失败立即重探。
 
 - 文件：`$DSH_HOME/storages/dsh-phone/agent.json`（权限 0600；`DSH_HOME` 空则 `~/.dsh`），内容
   `{"token":"<64 hex>","baseUrl":"http://127.0.0.1:<port>"}`；`baseUrl` 取自 `ctx.webServer.getOrigin()`。
-- 路由：`POST /dsh-phone/api/agent/config`，body 与 `POST /config` 相同（`{path,value,revision?}`，
-  允许 `attach.endpoint｜resolved｜userHint` 与 `onboarding.status｜choice`；userHint 仅浏览器可写）。
+- 路由：`POST /dsh-phone/api/agent/config`，body `{path,value,revision}`（**revision 必填**，CAS）；
+  **只允许 `attach.endpoint` / `attach.resolved`**（issue #71）：`onboarding.*` 与 `attach.userHint`
+  仅浏览器同源通道可写，Agent 写它们返回 403 `E_FORBIDDEN`（防 Agent 自我授权/切 runtime）。
+- Agent 可 `GET /dsh-phone/api/config`（仅读）获取 revision，再带 revision 做 CAS 写入。
 - 鉴权：**同时满足** ① `req.socket.remoteAddress` 为 loopback（127/8、::1、::ffff:127/8）；
   ② 无 `Origin` 头；③ `x-dsh-phone-token` 与文件 token 常量时间相等。任一不满足则回退
   `ctx.connection.requestRejection` 的原有校验；token 错误且无同源 cookie → 401 `E_AUTH`。
-  该通道适用于 Agent 闭环的三条路由：`POST /attach/verify`（R5）、`POST /agent/config`（R1/R4）、
-  `GET /status`（R4b）；screenshot 走 `phone_screenshot` 工具而非 HTTP。
-- R5/R4 不因通道变化：未 verify 的 endpoint 仍 409 `E_NOT_VERIFIED`；写后仍 describe 回读 + phone_status 复验。
-- **R2 收口**：`/agent/config` **禁止写 `attach.userHint`**（返回 403 `E_FORBIDDEN`，不落盘）——
-  一句话原文只由用户在设置页修改；浏览器 `POST /config` 仍允许写 userHint。
+  该通道适用于 Agent 闭环的路由：`GET /config`（取 revision）、`POST /attach/verify`（R5）、
+  `POST /agent/config`（R1/R4 CAS）、`GET /status`（R4b）；screenshot 走 `phone_screenshot` 工具而非 HTTP。
+- R5/R4 不因通道变化：未 verify 的 endpoint 仍 409 `E_NOT_VERIFIED`；verified 记录 TTL 5 分钟；
+  endpoint 只允许 loopback 且端口 ≥1024；写后仍 describe 回读 + phone_status 复验。
+- **R2/自授权收口**：`/agent/config` **只允许 attach.endpoint / attach.resolved**；写 `attach.userHint`
+  或 `onboarding.*` 返回 403 `E_FORBIDDEN`（不落盘）。onboarding 只能由用户在浏览器设置页/引导卡片确认。
+- **revision 必填**（issue #71）：缺失返回 400；Agent 先 `GET /config` 取 revision 再写。
+- **getOrigin 容错**：`ctx.webServer.getOrigin()` 在 listen 前会抛，`safeGetOrigin()` 回退
+  `http://127.0.0.1`，避免 HTTP/WS 注册整体失败。
 - 清理：插件 dispose（卸载/重载）时删除 token 文件；重载会生成新 token（旧 token 立即失效）。
 
 Agent 侧标准流程（docs 片段，也写进 README）：
@@ -205,19 +211,22 @@ Agent 侧标准流程（docs 片段，也写进 README）：
 ```sh
 BASE=$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.env.HOME+'/.dsh/storages/dsh-phone/agent.json','utf8')).baseUrl)")
 TOKEN=$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.env.HOME+'/.dsh/storages/dsh-phone/agent.json','utf8')).token)")
-# 1) 先验证（R5，不落盘）；成功才继续
+# 0) 取 revision（CAS 必需）
+REV=$(curl -sS "$BASE/dsh-phone/api/config" -H "x-dsh-phone-token: $TOKEN" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).value.revision")
+# 1) 先验证（R5，不落盘）；endpoint 必须 loopback 且端口 ≥1024
 curl -sS -X POST "$BASE/dsh-phone/api/attach/verify" -H 'content-type: application/json' \
   -H "x-dsh-phone-token: $TOKEN" -d '{"endpoint":"127.0.0.1:5555"}'
-# 2) 写 endpoint 与 resolved（R1 两个单键；会被 R4/R5 校验）
+# 2) 写 endpoint 与 resolved（R1 两个单键；带 revision）
 curl -sS -X POST "$BASE/dsh-phone/api/agent/config" -H 'content-type: application/json' \
-  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["attach","endpoint"],"value":"127.0.0.1:5555"}'
+  -H "x-dsh-phone-token: $TOKEN" -d "{\"path\":[\"attach\",\"endpoint\"],\"value\":\"127.0.0.1:5555\",\"revision\":$REV}"
 curl -sS -X POST "$BASE/dsh-phone/api/agent/config" -H 'content-type: application/json' \
-  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["attach","resolved"],"value":true}'
+  -H "x-dsh-phone-token: $TOKEN" -d '{"path":["attach","resolved"],"value":true,"revision":'$(($REV+1))'}'
 # 3) 复验 phone_status（R4b）
 curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 ```
 
-> 注意：`verify` 成功只记录在进程内 verified 集合；若插件重载，需重新 verify。
+> 注意：`verify` 成功只记录在进程内 verified 集合（TTL 5 分钟）；插件重载或过期后需重新 verify。
+> Agent 通道**不能**写 `onboarding.*`：首次使用守卫的同意/选择必须由用户在浏览器设置页/引导卡片完成。
 > 候选路径/端口探测仍由操作 Agent 的 shell 完成（插件不扫盘，见 §6.1）。
 
 ### 5.3 一键准备运行环境（Provisioning，issue #65）
