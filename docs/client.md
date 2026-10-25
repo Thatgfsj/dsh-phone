@@ -25,7 +25,12 @@ src/client/
   styles-settings.ts 设置/onboarding 卡片 CSS（从 styles.ts 拆出）
   settings.ts    设置页（onboarding 卡片/一句话/解析状态/重置/打开面板）
   settings-api.ts HTTP 客户端 + 409 冲突重试 + onboarding 类型 + 状态容错读取
-  onboarding.ts  首次使用引导：三态描述 + 写入流程（纯函数）+ 卡片组件
+  onboarding.ts  首次使用引导卡：declined/accepted 短状态卡；pending 委托一键准备卡
+  onboarding-flow.ts 引导纯逻辑：三态描述 + choice→i18n + 写入序列/409 重试（从 onboarding.ts 拆出）
+  provision-api.ts HTTP 客户端 + 容错解析 + 步骤/日志/降级判定（#66/#65）
+  provision-flow.ts 准备状态机 + 1s 轮询器（纯逻辑，可注入 clock/timer，单测）
+  provision-card.ts pending 一键卡与设置页入口组件（状态机 Hook + 自动启用）
+  provision-views.ts 进度条/最近日志/手动命令的展示组件
   connection.ts  协议编解码 + 指数退避 + 可见性双检测门控（纯逻辑）
   stream.ts      WebSocket 生命周期：握手、重连、心跳、半开检测
   decoder.ts     解码编排：WebCodecs → 软解回退
@@ -300,6 +305,27 @@ accept 两步写入与 revision 传递、409 重试后继续写、decline/reopen
 7. pending 时 GET /status 返回 `E_ONBOARDING_REQUIRED`：设置页仍正常渲染（不显示致命错误）。
 8. 明暗主题下卡片/命令块可读（仅 `--dsw-alias-*` token）。
 
+### 5.1 一键准备 UI（provisioning，issue #66 / Host API #65）
+
+首次使用卡片的主路径从「复制命令」改成「一次点击」：
+
+| 文件 | 职责 |
+|---|---|
+| `provision-api.ts` | `GET/POST /dsh-phone/api/provision` 客户端；`parseProvisionStatus` 容错解析（state/percent/log 截断）、`recentLog`、`provisionStepKey`、`isProvisionUnsupported`（旧 Host 404 降级） |
+| `provision-flow.ts` | `describeProvision` / `shouldAutoAccept` 纯状态判定 + `ProvisionPoller`（POST 启动、1s 轮询、done/failed 停止、可注入 clock/timer） |
+| `provision-card.ts` | 状态机 Hook（probe/auto-accept/start/stop/retry）+ pending 卡与 settings 入口组件 |
+| `provision-views.ts` | 进度条 + 最近 5 行日志 + 可折叠手动命令（展示性组件） |
+
+交互与契约：
+
+- **pending 卡**：主按钮「一键准备并启用手机（约 1.7GB，需几分钟）」；次按钮「使用已有实例」/「暂不使用」；「手动命令」可折叠（emulator/redroid 命令 + 手动选择按钮）。
+- 点击主按钮 → `POST /dsh-phone/api/provision {runtime:'emulator'}` → 每 1s `GET /provision`，显示 `step`（映射 i18n 阶段文案）、`percent`（进度条）与最近 5 行 `log`（等宽块、可滚动）；`running` 时显示「停止刷新」。
+- **停止刷新只停轮询**：契约 #65 没有 cancel 端点，后台准备可能继续；文案明确提示，不假装取消。
+- `failed`：显示 `error` + 最近日志 + 「重试」（再次 POST）+「手动命令」。
+- `done`：若 onboarding 仍为 pending，**自动写** `onboarding.choice='emulator'` + `onboarding.status='accepted'`（沿用 409 刷新重试一次），卡片关闭进入视频流；挂载时 `probe` 到 done 也直接启用（已装检测，不重复下载）。
+- 旧 Host 无 `/provision`（404/E_NO_WEB）：主按钮降级为提示 + 手动命令，不阻塞现有流程。
+- **设置页**：pending 走同一张 onboarding 卡；accepted 后额外显示「运行环境」入口（状态 + 一键准备/重试 + 日志 + 手动命令）。
+
 ## 6. 测试与自检
 
 ```sh
@@ -315,7 +341,9 @@ node scripts/check-file-lines.mjs
 header 入口注册与点击→openTab、auto-open 三态条件（pending 打开 / declined 跳过 / accepted 打开）
 与重试/超时/不抛错、面板空态三态判定与文案、初次配置读取重试（首帧不闪错）、
 booting 进度分段/百分比/超时文案与轮询器生命周期（假 clock/status）、enabled 三态展示判定与写入禁用、
-面板布局断点（320/360/400/600/800）、stage overlay 判定优先级、booting 摘要（已等待 Ns / 预计约 100s）。
+面板布局断点（320/360/400/600/800）、stage overlay 判定优先级、booting 摘要（已等待 Ns / 预计约 100s）、
+provisioning 状态解析/步骤映射/日志截断、pending→running→done/failed 轮询器生命周期（假 clock/status）、
+停止轮询/409 依赖/自动启用判定/旧 Host 降级、POST body 与错误 envelope。
 
 ## 7. 未验证项（真实浏览器 / 真实 Host 待 task-8）
 1. WebCodecs 在 Chrome/Firefox/Safari 对 `avc.format='annexb'` + in-band SPS/PPS 的接受度；
@@ -337,3 +365,5 @@ booting 进度分段/百分比/超时文案与轮询器生命周期（假 clock/
 13. 动态安装后「刷新页面 → 入口/自动打开出现」的真实页面流程未验证（#48 依据 DSH 客户端模块加载模型与
     用户反馈整理；「刷新不中断会话」为设计语义，Host 侧会话与实例状态不受页面刷新影响）。
 14. 面板重做后的 320/400/600px 三档真实截图核对未做（本机无浏览器自动化）；布局纯函数已单测，CSS 观感需 #8 人工确认。
+15. 一键准备 UI 依赖 Host #65（`/dsh-phone/api/provision`）；#65 合并前真实 Host 会 404 → UI 降级为手动命令（已单测），真实「点一次装完并启用」需 #8 在合并后验收。
+16. 「停止刷新」只停客户端轮询，契约没有 cancel 端点；后台 sdkmanager/avdmanager 可能继续执行（文案已说明）。

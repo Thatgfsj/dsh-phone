@@ -13,11 +13,16 @@ import { CLIENT_CSS } from './styles.ts'
 import { ConfigApiError, canEditConfig, createFetchConfigApi, describeEnabled, messageOf, readRunStatus, writeWithConflictRetry } from './settings-api.ts'
 import type { ConfigApi, PhoneConfigView, PhoneStatusView } from './settings-api.ts'
 import { choiceLabelKey, createOnboardingCard, describeOnboarding } from './onboarding.ts'
+import { createProvisionCard } from './provision-card.ts'
+import { createFetchProvisionApi } from './provision-api.ts'
+import type { ProvisionApi } from './provision-api.ts'
 
 export interface SettingsDeps {
   React: typeof ReactNamespace
   t: Translate
   api?: ConfigApi
+  /** Injectable provisioning API for tests/embedding. */
+  provisionApi?: ProvisionApi
   /** Opens the right-Sidebar phone tab (the Host decides the tab kind). */
   openPanel: () => void
 }
@@ -28,6 +33,8 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
   const h = React.createElement
   const api = deps.api ?? createFetchConfigApi()
   const OnboardingCard = createOnboardingCard({ React, t })
+  const ProvisionEntry = createProvisionCard({ React, t }).entry
+  const provisionApi = deps.provisionApi ?? createFetchProvisionApi()
 
   function PhoneSettings(): ReactNamespace.ReactElement {
     const [config, setConfig] = React.useState<PhoneConfigView>()
@@ -151,6 +158,7 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
         : h(OnboardingCard, {
             key: 'onboarding',
             api,
+            provisionApi,
             config,
             reload: load,
             onConfig: (next: PhoneConfigView) => {
@@ -160,6 +168,18 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
             onMessage: (text: string) => setMessage(text),
             onError: (text: string | undefined) => setError(text),
           }),
+      config !== undefined && editable && mode.showSetup
+        ? h(ProvisionEntry, {
+            key: 'provision',
+            api,
+            provisionApi,
+            config,
+            reload: load,
+            onConfig: (next: PhoneConfigView) => setConfig(next),
+            onMessage: (text: string) => setMessage(text),
+            onError: (text: string | undefined) => setError(text),
+          })
+        : null,
       mode.showSetup && editable
         ? h(
             'div',

@@ -4,6 +4,7 @@
  * Only \`--dsw-alias-*\` tokens are used.
  */
 import { SETTINGS_CSS } from './styles-settings.ts'
+import { PROVISION_CSS } from './styles-provision.ts'
 export const PANEL_CSS = `
 .dshp-root {
   container-type: inline-size;
@@ -262,4 +263,4 @@ export const PANEL_CSS = `
 }
 `
 
-export const CLIENT_CSS = PANEL_CSS + SETTINGS_CSS
+export const CLIENT_CSS = PANEL_CSS + SETTINGS_CSS + PROVISION_CSS
