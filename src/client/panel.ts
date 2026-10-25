@@ -77,9 +77,12 @@ export function createPhonePanel(deps: PanelDeps): ReactNamespace.ComponentType 
       'div',
       { className: 'dshp-root' },
       h('style', { key: 'dshp-style' }, CLIENT_CSS),
-      gate === 'checking'
-        ? h('div', { className: 'dshp-placeholder' }, t('panel.empty.checking'))
-        : h(PanelEmptyState, {
+      h(
+        'div',
+        { className: 'dshp-scroll' },
+        gate === 'checking'
+          ? h('div', { className: 'dshp-overlay' }, h('div', { className: 'dshp-text' }, t('panel.empty.checking')))
+          : h(PanelEmptyState, {
             gate,
             config,
             api,
@@ -94,6 +97,7 @@ export function createPhonePanel(deps: PanelDeps): ReactNamespace.ComponentType 
             },
             errorMessage: error === undefined ? undefined : messageOf(error),
           }),
+      ),
     )
   }
 

@@ -79,14 +79,14 @@ export function createPanelEmptyState(deps: EmptyStateDeps): ReactNamespace.Comp
     return h(
       'div',
       { className: 'dshp-empty', 'data-state': gate },
-      h('div', { className: 'dshp-empty-title' }, copy.title),
-      h('p', { className: 'dshp-hint' }, copy.body),
-      h('p', { className: 'dshp-hint' }, copy.hint),
+      h('div', { className: 'dshp-text dshp-empty-title' }, copy.title),
+      h('p', { className: 'dshp-text dshp-hint' }, copy.body),
+      h('p', { className: 'dshp-text dshp-hint' }, copy.hint),
       feedback === undefined
         ? null
         : h(
             'p',
-            { className: feedback.tone === 'ok' ? 'dshp-hint' : 'dshp-error' },
+            { className: feedback.tone === 'ok' ? 'dshp-text dshp-hint' : 'dshp-text dshp-error' },
             feedback.text,
           ),
       showCard
@@ -106,7 +106,7 @@ export function createPanelEmptyState(deps: EmptyStateDeps): ReactNamespace.Comp
       copy.action === 'retry'
         ? h(
             'div',
-            { className: 'dshp-row' },
+            { className: 'dshp-actions' },
             h(
               'button',
               { type: 'button', className: 'dshp-button', onClick: onRetry },

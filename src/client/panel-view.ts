@@ -1,10 +1,14 @@
 /**
- * Streaming body of the phone panel (canvas, connection chrome, reconnect and
- * input forwarding). Mounted only when the panel gate is `ready` (see panel.ts).
+ * Streaming body of the phone panel (issue #62 layout).
  *
- * It streams only while the tab body is visible: an IntersectionObserver plus
- * `visibilitychange` feed a {@link VisibilityGate}, and hiding closes the socket
- * with code 1000 so the Host can stop encoding (docs/protocol.md §2.4).
+ * Mounted only when the configuration gate is ready (panel.ts). Composition:
+ *   header  (chrome + boot progress)   panel-header.ts
+ *   stage   (canvas + centered states) panel-stage.ts
+ *   footer  (device keys + hint)       panel-footer.ts
+ *
+ * Layout width is measured on the root with a ResizeObserver and turned into a
+ * pure `PanelLayout` (layout.ts), so the 320–600px dock widths get deliberate
+ * narrow layouts instead of squeezed flex rows.
  */
 import type * as ReactNamespace from 'react'
 import type { DecoderKind } from './decoder.ts'
@@ -12,13 +16,17 @@ import { StreamDecoder } from './decoder.ts'
 import type { ParsedVideoFrame, ServerMessage, VisibilitySources } from './connection.ts'
 import type { Translate } from './i18n.ts'
 import { VisibilityGate } from './connection.ts'
-import { BootStatusPoller, createBootIndicator, describeBootProgress } from './boot.ts'
+import { BootStatusPoller, describeBootProgress } from './boot.ts'
 import type { BootProgress } from './boot.ts'
-import { statusLabel, statusTone } from './panel-status.ts'
+import { describePanelLayout, PANEL_DEFAULT_WIDTH } from './layout.ts'
+import type { PanelLayout } from './layout.ts'
+import { createPanelFooter } from './panel-footer.ts'
+import { createPanelHeader } from './panel-header.ts'
+import { createPanelStage } from './panel-stage.ts'
 import { CLIENT_CSS } from './styles.ts'
 import { StreamClient } from './stream.ts'
 import type { StreamState } from './stream.ts'
-import { KEY_BUTTONS, mapKeyboardKey, mapPointerToDevice } from './input.ts'
+import { mapKeyboardKey, mapPointerToDevice } from './input.ts'
 import type { ConfigApi } from './settings-api.ts'
 
 export interface PanelViewDeps {
@@ -31,13 +39,18 @@ export interface PanelViewDeps {
 export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.ComponentType {
   const { React, t, api } = deps
   const h = React.createElement
-  const BootIndicator = createBootIndicator({ React, t })
+  const PanelHeader = createPanelHeader({ React, t })
+  const PanelStage = createPanelStage({ React, t })
+  const PanelFooter = createPanelFooter({ React, t })
+
   function PhonePanel(): ReactNamespace.ReactElement {
+    const rootRef = React.useRef<HTMLDivElement | null>(null)
     const stageRef = React.useRef<HTMLDivElement | null>(null)
     const canvasRef = React.useRef<HTMLCanvasElement | null>(null)
     const clientRef = React.useRef<StreamClient | null>(null)
     const draggingRef = React.useRef(false)
     const deviceRef = React.useRef({ width: 0, height: 0 })
+    const [layout, setLayout] = React.useState<PanelLayout>(describePanelLayout(PANEL_DEFAULT_WIDTH))
     const [status, setStatus] = React.useState<StreamState>('idle')
     const [kind, setKind] = React.useState<DecoderKind | 'pending'>('pending')
     const [meta, setMeta] = React.useState<{ width: number; height: number; codec: string; maxFps: number }>()
@@ -57,14 +70,14 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
       })
 
       const applySize = (): void => {
+        const root = rootRef.current
+        if (root !== null) setLayout(describePanelLayout(root.clientWidth))
         const rect = stage.getBoundingClientRect()
         decoder.renderer.resize(rect.width, rect.height, window.devicePixelRatio || 1)
       }
       applySize()
 
       const client = new StreamClient({
-        // The first hello may precede `ready`; fall back to the default 720p
-        // portrait so the Host never receives a zero viewport.
         viewport: () => ({
           w: deviceRef.current.width || 720,
           h: deviceRef.current.height || 1280,
@@ -72,7 +85,6 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
         onFrame: (frame: ParsedVideoFrame) => decoder.push(frame),
         onMessage: (message: ServerMessage) => {
           if (message.type === 'ready') {
-            // The Host may report the real framebuffer; fall back to the video size.
             deviceRef.current = {
               width: message.deviceWidth ?? message.width,
               height: message.deviceHeight ?? message.height,
@@ -142,8 +154,13 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
       client.start(gate.visible)
 
       const resizeObserver =
-        typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => applySize())
+        typeof ResizeObserver === 'undefined'
+          ? undefined
+          : new ResizeObserver(() => {
+              applySize()
+            })
       resizeObserver?.observe(stage)
+      if (rootRef.current !== null) resizeObserver?.observe(rootRef.current)
 
       return () => {
         resizeObserver?.disconnect()
@@ -158,10 +175,9 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
 
     const pointFromEvent = (event: ReactNamespace.PointerEvent<HTMLCanvasElement>): { x: number; y: number } => {
       const rect = event.currentTarget.getBoundingClientRect()
-      const box = { width: rect.width, height: rect.height }
       return mapPointerToDevice(
         { x: event.clientX - rect.left, y: event.clientY - rect.top },
-        box,
+        { width: rect.width, height: rect.height },
         deviceRef.current,
       )
     }
@@ -194,107 +210,39 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
       clientRef.current?.sendKey(name as 'BACK' | 'ENTER' | 'DEL' | 'HOME' | 'RECENTS')
     }
 
-    const placeholder = ((): string | undefined => {
-      if (error !== undefined) return undefined
-      if (boot !== undefined) return undefined
-      if (status === 'ready') return undefined
-      if (status === 'hidden') return t('panel.status.hidden')
-      return statusLabel(t, status)
-    })()
+    const reconnect = (): void => clientRef.current?.reconnect()
+    const sendKey = (name: 'HOME' | 'BACK' | 'RECENTS' | 'ENTER' | 'DEL'): void => clientRef.current?.sendKey(name)
 
     return h(
       'div',
-      { className: 'dshp-root' },
+      { className: 'dshp-root', ref: rootRef },
       h('style', { key: 'dshp-style' }, CLIENT_CSS),
-      h(
-        'div',
-        { className: 'dshp-row' },
-        h('span', { className: 'dshp-badge', 'data-tone': statusTone(status) }, statusLabel(t, status)),
-        boot === undefined ? null : h(BootIndicator.badge, { progress: boot }),
-        meta === undefined
-          ? null
-          : h(
-              'span',
-              { className: 'dshp-badge' },
-              t('panel.meta', {
-                width: meta.width,
-                height: meta.height,
-                codec: meta.codec,
-                fps: meta.maxFps,
-              }),
-            ),
-        h(
-          'span',
-          { className: 'dshp-badge' },
-          kind === 'webcodecs'
-            ? t('panel.decoder.webcodecs')
-            : kind === 'soft'
-              ? t('panel.decoder.tinyh264')
-              : t('panel.decoder.pending'),
-        ),
-        h('span', { className: 'dshp-grow' }),
-        h(
-          'button',
-          {
-            type: 'button',
-            className: 'dshp-button',
-            onClick: () => clientRef.current?.reconnect(),
-            disabled: status === 'hidden',
-          },
-          t('panel.reconnect'),
-        ),
-      ),
-      h(
-        'div',
-        { className: 'dshp-stage', ref: stageRef },
-        h('canvas', {
-          ref: canvasRef,
-          className: 'dshp-canvas',
-          tabIndex: 0,
-          onPointerDown,
-          onPointerMove,
-          onPointerUp: endPointer,
-          onPointerCancel: endPointer,
-          onKeyDown,
-        }),
-        boot === undefined ? null : h(BootIndicator.overlay, { progress: boot }),
-        error === undefined
-          ? null
-          : h('div', { className: 'dshp-placeholder' }, h('div', { className: 'dshp-error' }, error)),
-        error === undefined && placeholder !== undefined
-          ? h('div', { className: 'dshp-placeholder' }, placeholder)
-          : null,
-      ),
-      h(
-        'div',
-        { className: 'dshp-keys' },
-        ...KEY_BUTTONS.map((button) =>
-          h(
-            'button',
-            {
-              type: 'button',
-              key: button.name,
-              className: 'dshp-button',
-              onClick: () => clientRef.current?.sendKey(button.name),
-            },
-            t(button.label),
-          ),
-        ),
-      ),
-      h('div', { className: 'dshp-hint' }, t('panel.settingsHint')),
+      h(PanelHeader, {
+        layout,
+        status,
+        kind,
+        boot,
+        meta,
+        onReconnect: reconnect,
+        reconnectDisabled: status === 'hidden',
+      }),
+      h(PanelStage, {
+        status,
+        boot,
+        error,
+        onRetry: reconnect,
+        stageRef,
+        canvasRef,
+        onPointerDown,
+        onPointerMove,
+        onPointerUp: endPointer,
+        onPointerCancel: endPointer,
+        onKeyDown,
+      }),
+      h(PanelFooter, { layout, onKey: sendKey, disabled: false }),
     )
   }
 
   PhonePanel.displayName = 'DshPhonePanel'
   return PhonePanel
-}
-
-/** Build the chip title component (second seat under the same tab id). */
-export function createPhonePanelTitle(deps: PanelViewDeps): ReactNamespace.ComponentType {
-  const { React, t } = deps
-  function PhonePanelTitle(): ReactNamespace.ReactElement {
-    return React.createElement('span', null, t('panel.title'))
-  }
-  PhonePanelTitle.displayName = 'DshPhonePanelTitle'
-  return PhonePanelTitle
 }

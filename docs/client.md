@@ -10,13 +10,19 @@
 src/client/
   index.ts      入口：export default function(require) → { name, inject, apply }
   panel.ts       面板外壳：先读 /config 做 onboarding/Host 门控，再挂 streaming view；标题 seat
-  panel-view.ts  tab body 的 streaming 视图（canvas/状态/重连/按键）
+  panel-view.ts  面板组合：header/stage/footer + 流生命周期 + 宽度测量（#62）
   header.ts      会话头部入口按钮（conversation.session.header.utilities list seat）
   auto-open.ts   onboarding accepted 时 best-effort 自动打开（≤10s 静默重试）
   gate.ts        面板门控判定（checking/ready/pending/declined/unavailable）
   empty-state.ts 面板空态：可读文案 + 内嵌 onboarding 三态卡
   boot.ts        booting 进度模型 + 1s /status 轮询器 + 进度 UI（#39）
   panel-status.ts 面板状态徽章文案/色调（从 panel-view 拆出，控制行数）
+  layout.ts      面板宽度断点/状态覆盖层/booting 摘要纯函数（#62，单测）
+  panel-header.ts 面板 header：图标/标题/状态徽章/重连/booting 进度行（#62）
+  panel-stage.ts  面板主区：canvas letterbox + 居中 overlay（#62）
+  panel-footer.ts 面板 footer：紧凑设备按键图标组 + 设置提示（#62）
+  styles.ts       面板 shell CSS（min-width:0 / 长文本块 / container query）
+  styles-settings.ts 设置/onboarding 卡片 CSS（从 styles.ts 拆出）
   settings.ts    设置页（onboarding 卡片/一句话/解析状态/重置/打开面板）
   settings-api.ts HTTP 客户端 + 409 冲突重试 + onboarding 类型 + 状态容错读取
   onboarding.ts  首次使用引导：三态描述 + 写入流程（纯函数）+ 卡片组件
@@ -216,6 +222,40 @@ tab body 挂载时先 `GET /dsh-phone/api/config`，由 `describePanelGate()` �
   继续轮询并用本地 elapsed 兜底，避免 Host 正在启动时的瞬时 403/503 打断 UI。
 - `ready` 后清空进度；`state.phase` 文案见 i18n `panel.boot.*`。
 
+### 4.3 面板布局与视觉（issue #62）
+
+v0.2.0 的「一列一个字」根因：placeholder 把**字符串直接作为 flex 容器子节点**，CJK 匿名 flex item 的
+min-content 宽度只有 1 个字。重构后：
+
+| 文件 | 职责 |
+|---|---|
+| `layout.ts` | `describePanelLayout(width)` 断点（≤360 compact / <600 regular / ≥600 wide）、`describeStageView`（error > booting > canvas）、`summarizeBoot`（已等待 Ns / 预计约 100s），纯函数可单测 |
+| `panel-header.ts` | 手机图标 + 标题 + 状态徽章 + 重新连接；booting 时进度条 + 「已等待 Ns / 预计约 100s」块 |
+| `panel-stage.ts` | canvas letterbox + 居中 overlay（booting：spinner+phase+进度；connecting：spinner+文案；error：错误摘要+重新检测） |
+| `panel-footer.ts` | 主屏/返回/最近/确认/删除紧凑图标按钮（title/aria-label，窄屏隐藏文字标签）+ 设置提示 |
+| `panel-view.ts` | 组合 header/stage/footer + 流生命周期 + 宽度测量 |
+| `styles.ts` / `styles-settings.ts` | 面板 shell 与设置卡片 CSS（拆分控制行数） |
+
+布局硬规则（CSS）：
+
+- 所有 flex/grid 结构子项 `min-width: 0`，纵向结构子项 `min-height: 0`；
+- 长文本一律显式块 `.dshp-text`（`display:block; width:100%; white-space:normal;
+  overflow-wrap:anywhere; line-height:1.5`），**禁止**作为 flex row 的裸字符串子节点；
+- `.dshp-root` 用 `container-type: inline-size`，`@container (max-width: 360px)` 收起 footer 文字标签、
+  让空态按钮全宽；
+- stage 是唯一可伸缩盒子（`flex:1 1 auto; min-height:0`），canvas `max-width/max-height:100%`，
+  letterbox 由渲染器绘制；空态在 `.dshp-scroll` 内可纵向滚动，不横向溢出。
+
+人工核对清单（右栏分别拖到 320 / 400 / 600px，明暗主题各一次）：
+
+1. **320px（compact）**：header 一行不溢出（必要时换行）；booting 行换行后仍完整可读；footer 5 个图标按钮成一行或两行、无竖排文字；页面无横向滚动条。
+2. **400px（regular）**：header 图标+标题+徽章+重新连接同排；booting 进度条 + 「已等待 Ns / 预计约 100s」一行放得下；footer 图标+标签。
+3. **600px（wide）**：主区域 canvas 明显变大且保持设备比例、两侧 letterbox；meta/decoder 次级行完整；footer 不拥挤。
+4. booting 时主区域居中显示 spinner + 进度条 + phase，不再黑屏；等 ready 后 overlay 消失只剩画面。
+5. 不可用/错误态居中显示可读错误 + 重新检测；pending 显示 onboarding 卡（窄屏按钮全宽、可滚动）。
+6. 长时间文案（中文长句、endpoint、错误 message）在任何宽度下都按行换行，绝不竖排单字。
+7. 明暗主题切换：面板背景/边框/文字颜色全部跟随 `--dsw-alias-*`，无硬编码色。
+
 ## 5. 首次使用引导（onboarding，issue #31）
 
 配合 Host 侧 onboarding 守卫（issue #30）。契约：
@@ -274,7 +314,8 @@ node scripts/check-file-lines.mjs
 设备坐标换算（letterbox/夹取）、WebCodecs configure/chunk 参数、codec string、I420→RGBA、软解真实关键帧、
 header 入口注册与点击→openTab、auto-open 三态条件（pending 打开 / declined 跳过 / accepted 打开）
 与重试/超时/不抛错、面板空态三态判定与文案、初次配置读取重试（首帧不闪错）、
-booting 进度分段/百分比/超时文案与轮询器生命周期（假 clock/status）、enabled 三态展示判定与写入禁用。
+booting 进度分段/百分比/超时文案与轮询器生命周期（假 clock/status）、enabled 三态展示判定与写入禁用、
+面板布局断点（320/360/400/600/800）、stage overlay 判定优先级、booting 摘要（已等待 Ns / 预计约 100s）。
 
 ## 7. 未验证项（真实浏览器 / 真实 Host 待 task-8）
 1. WebCodecs 在 Chrome/Firefox/Safari 对 `avc.format='annexb'` + in-band SPS/PPS 的接受度；
@@ -293,5 +334,6 @@ booting 进度分段/百分比/超时文案与轮询器生命周期（假 clock/
 10. pending 自动打开 + Host 冷启动竞态下的真实首屏顺序（是否确实先卡片、无错误闪动）需 #8 真机确认。
 11. booting 进度依赖 `PhoneStatus.bootMs` 的真实刷新频率与冷启动时长（本机单测用假 clock；#44 合并后需 rebase 复验语义）。
 12. `enabled` 字段已由 host #52（#53 合并）在 `GET /config` 暴露；真实页面下 enabled=true/false 的只读展示与写入区隐藏未验证（#8）。
-11. 动态安装后「刷新页面 → 入口/自动打开出现」的真实页面流程未验证（#48 依据 DSH 客户端模块加载模型与
+13. 动态安装后「刷新页面 → 入口/自动打开出现」的真实页面流程未验证（#48 依据 DSH 客户端模块加载模型与
     用户反馈整理；「刷新不中断会话」为设计语义，Host 侧会话与实例状态不受页面刷新影响）。
+14. 面板重做后的 320/400/600px 三档真实截图核对未做（本机无浏览器自动化）；布局纯函数已单测，CSS 观感需 #8 人工确认。

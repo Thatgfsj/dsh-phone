@@ -8,9 +8,6 @@
  * ready/running stops the poller. Everything here is injectable (clock/timers/
  * status reader) so the poll lifecycle is unit-tested without a browser.
  */
-import type * as ReactNamespace from 'react'
-import type { Translate } from './i18n.ts'
-import type { PhoneStatusView } from './settings-api.ts'
 
 /** Cold-boot ceiling used for the progress bar and the "slow" wording. */
 export const BOOT_TIMEOUT_MS = 120_000
@@ -137,65 +134,4 @@ export class BootStatusPoller {
       void this.#tick()
     }, this.#intervalMs)
   }
-}
-
-/** Read `GET /status` as a boot status; typing helper for the panel wiring. */
-export function toBootStatus(status: Pick<PhoneStatusView, 'state' | 'bootMs'>): BootStatus {
-  return status.bootMs === undefined ? { state: status.state } : { state: status.state, bootMs: status.bootMs }
-}
-
-
-export interface BootIndicatorDeps {
-  React: typeof ReactNamespace
-  t: Translate
-}
-
-export interface BootIndicatorProps {
-  progress: BootProgress
-}
-
-/**
- * Badge + overlay for the booting state. Kept in this module (not panel-view.ts)
- * so the panel body stays within the 300-line target.
- */
-export function createBootIndicator(deps: BootIndicatorDeps): {
-  badge: ReactNamespace.ComponentType<BootIndicatorProps>
-  overlay: ReactNamespace.ComponentType<BootIndicatorProps>
-} {
-  const { React, t } = deps
-  const h = React.createElement
-
-  function BootBadge(props: BootIndicatorProps): ReactNamespace.ReactElement {
-    return h(
-      'span',
-      {
-        className: 'dshp-badge',
-        'data-tone': props.progress.timedOut ? 'warn' : 'neutral',
-      },
-      t('panel.boot.progress', { seconds: props.progress.seconds }),
-    )
-  }
-
-  function BootOverlay(props: BootIndicatorProps): ReactNamespace.ReactElement {
-    return h(
-      'div',
-      { className: 'dshp-boot', 'data-state': 'booting' },
-      h('div', null, t(props.progress.phaseKey)),
-      h(
-        'div',
-        { className: 'dshp-progress' },
-        h('div', {
-          className: 'dshp-progress-bar',
-          style: { width: props.progress.percent + '%' },
-        }),
-      ),
-      h(
-        'span',
-        { className: 'dshp-hint' },
-        t('panel.boot.placeholder') + ' · ' + t('panel.boot.percent', { percent: props.progress.percent }),
-      ),
-    )
-  }
-
-  return { badge: BootBadge, overlay: BootOverlay }
 }
