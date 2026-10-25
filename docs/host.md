@@ -61,6 +61,10 @@ Host 不直接读写 `cordis.patch.yml`，不自行实现 runtime/收流；runti
   `onboarding.status` / `onboarding.choice`（issue #30）。其它路径返回 `400 E_BAD_PATH`，不会调用 mutate。
 - **冲突**：revision 不匹配时重新 describe 后用新 revision 重试一次；再次冲突返回
   `409 E_CONFIG_CONFLICT`（retryable=true），由客户端刷新后重试。
+- **R4b 真实验证（issue #70）**：写 `attach.endpoint` / `resolved=true` 成功后，Host 调用
+  `PhoneService.reconnectAndVerify()`：关闭旧流/旧 ADB → 丢弃 adapter 缓存 → 按**当前配置**重连新端点 →
+  在**新连接**上执行 `getprop ro.product.model`；失败返回 stopped + lastError，HTTP 层映射
+  `502 E_DEVICE_DISCONNECTED`（不再用旧连接造成假通过）。
 - **R5 先验证后落盘**：`POST /attach/verify` 成功的 endpoint 才被记入进程内 `verified` 集合；
   写 `attach.endpoint` 或 `resolved=true` 前检查该集合，否则 `409 E_NOT_VERIFIED`。verify 本身不写配置。
 - **R4b 写完复验**：写 endpoint / resolved=true 成功后，路由调用 `service.ensureRunning()`
@@ -152,7 +156,7 @@ activity/window/display/battery/cpuinfo/meminfo/gfxinfo/input/power/wifi。
 |---|---|
 | 探测成功 | `RuntimeHandle` 缓存；后续 status/工具复用，不重复探测 |
 | 探测失败 | **不永久缓存**：错误保留 `RUNTIME_PROBE_RETRY_MS = 30s` 作为最短重探间隔；窗口内 status/工具立即失败（防抖，避免面板轮询打爆 docker/emulator 探测），窗口后下一次调用重新探测 |
-| `runtime` / `onboarding.status` / `onboarding.choice` 变化 | 立即丢弃成功 handle 与失败缓存（volatile 热更新路径，无需重载插件） |
+| `runtime` / `onboarding.status` / `onboarding.choice` / **`attach.endpoint` / `attach.resolved`** 变化 | 立即丢弃成功 handle 与失败缓存，并丢弃旧 ADB 连接，下一次 `ensureRunning` **强制重连新端点**（不得命中 running 快路径；issue #70） |
 | adapter 报告 `running=false && paused=false` 且生命周期为 `stopped` | 丢弃 handle，下一次调用重探 |
 | ADB 断连（`AdbConnection.disconnected`） | 丢弃 handle，下一次调用重探 |
 | `start`/`resume` 失败 | 丢弃 handle（adapter 视为不可用）；不写 30s 失败缓存，下一次调用立即重探 |
@@ -170,7 +174,7 @@ adapter 不可用失效、启动失败立即重探。
 |---|---|
 | GET `/status` | onboarding pending/declined → 200 `{ok:false,error:{code:'E_ONBOARDING_*',...}}`（不碰设备）；accepted → `service.status()`；no-store |
 | GET `/config` | `{enabled, runtime, onboarding:{status,choice}, attach:{endpoint,userHint,resolved}, stream:{maxSize,maxFps,bitrate}, revision}`；`enabled` 来自 Config.enabled（只读、非 volatile，变更需重载）；主 handler 与 enabled=false 的只读 handler 形状一致；revision 来自 settings.describe（缺失 settings → 503 E_NO_WEB） |
-| POST `/config` | body `{path:string[], value, revision?}`；只允许五键（attach 三键 + onboarding 两键）；R5 检查；写后回读 + 复验；成功返回同上 snapshot |
+| POST `/config` | body `{path:string[], value, revision}`（revision 必填）；只允许五键（attach 三键 + onboarding 两键）；R5 检查；写后回读 + 复验；成功返回同上 snapshot |
 | POST `/attach/verify` | body `{endpoint}`；adb connect(timeout 3000) + `getprop ro.product.model`；成功 200 `{ok:true,latencyMs,banner}`，失败 200 `{ok:false,latencyMs,error}`；不落盘 |
 | GET `/screenshot` | `image/png` + no-store；onboarding pending/declined → 200 JSON `E_ONBOARDING_*`；booting → 200 JSON `E_BOOTING`（error.bootMs） |
 | GET `/provision` | `ProvisionStatus`（idle/running/done/failed + step/percent/log/error/runtime）；见 §5.3 |
