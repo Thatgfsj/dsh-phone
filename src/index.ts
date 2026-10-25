@@ -20,6 +20,9 @@ import type { ConfigView } from './http/routes.ts'
 import type { AttachmentsLike } from './phone/contracts.ts'
 import type { PhoneService } from './phone/service.ts'
 import { createPhoneService, readOnboarding } from './phone/wiring.ts'
+import { createProvisioner } from './provisioning/defaults.ts'
+import { createCommandRunner } from './runtime/command.ts'
+import { createSystemEnvironment } from './runtime/probe.ts'
 import type { PhoneStreamService, StreamConnectionFence } from './stream/index.ts'
 import { createStreamUpgradeRoute } from './stream/index.ts'
 import type { ToolHostLike } from './tools/common.ts'
@@ -120,6 +123,15 @@ export function apply(ctx: Context, config: PhoneConfig): void {
   const service: PhoneService = createPhoneService(config)
   ctx.effect(() => () => void service.dispose())
 
+  // 一键准备运行环境（issue #65）：懒执行，只有用户点击 POST /provision 才会跑命令
+  const provisioner = createProvisioner({
+    env: createSystemEnvironment(),
+    runner: createCommandRunner(),
+    verifyEndpoint: (endpoint) => service.verifyEndpoint(endpoint),
+    getAttachEndpoint: () => config.attach.endpoint.get(),
+  })
+  ctx.effect(() => () => provisioner.dispose())
+
   // 3) tools + phone_shell 审批（非白名单命令走 ask，SPEC §6.3）
   const attachments = (): AttachmentsLike | undefined =>
     ctx.get('attachments') as AttachmentsLike | undefined
@@ -145,6 +157,7 @@ export function apply(ctx: Context, config: PhoneConfig): void {
 
     const api = createApiHandler({
       service,
+      provisioner,
       getSettings: () => ctx.get('settings') as SettingsFacade | undefined,
       getConnection: () => ctx.get('connection') as ConnectionLike | undefined,
       getConfigView: () => configView(config),

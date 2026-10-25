@@ -27,6 +27,8 @@
 | GET | `/dsh-phone/api/config` | — | `{ enabled, runtime, onboarding:{status,choice}, attach:{endpoint,userHint,resolved}, stream:{maxSize,maxFps,bitrate}, revision }`（`enabled` 只读，见 §1.3） |
 | POST | `/dsh-phone/api/config` | `{ path:['attach','userHint'], value, revision }`（也接受 `onboarding.status` / `onboarding.choice`） | 同上（写后回读，R4） |
 | POST | `/dsh-phone/api/attach/verify` | `{ endpoint:'127.0.0.1:5555' }` | `{ ok:boolean, latencyMs, banner?:string }`（**不落盘**，R5） |
+| GET | `/dsh-phone/api/provision` | — | `ProvisionStatus`（见 §1.4） |
+| POST | `/dsh-phone/api/provision` | `{ runtime:'emulator'|'redroid'|'attach', image?:'google_apis'|'aosp_atd' }` | `ProvisionStatus`（仅浏览器同源；见 §1.4） |
 | GET | `/dsh-phone/api/screenshot` | — | PNG 字节（`image/png`，非 JSON 包装） |
 
 说明：
@@ -75,6 +77,34 @@ interface PhoneStatus {
   客户端可据此显示「已启用 / 已关闭（只读）」并整体禁用写入区；
 - 该字段**只读**：`POST /config` / `POST /agent/config` 均不接受 `enabled` 路径（400 `E_BAD_PATH`）；
 - 旧 Host 兼容：客户端按「缺省视为 true / 或按自身默认」处理（客户端侧实现）。
+
+### 1.4 一键准备运行环境（Provisioning，issue #65）
+
+```ts
+interface ProvisionStatus {
+  state: 'idle' | 'running' | 'done' | 'failed'
+  step: string        // precheck / locate / install / licenses / avd / verify / done / failed
+  percent: number     // 0–100（阶段估算；sdkmanager 输出含百分比时用于校正）
+  log: string[]       // 最近 50 行（命令、输出摘要、错误、redroid 手动命令）
+  error?: string      // state=failed 时
+  runtime?: 'emulator' | 'redroid' | 'attach'
+}
+```
+
+- **POST /provision** 仅在用户点击时调用；同源鉴权通过 `ctx.connection.requestRejection`（浏览器 cookie）。
+- **幂等/并发**：`state=running` 时再次 POST 直接返回当前状态（不排队、不重复执行）；`done` 且
+  runtime 相同直接返回；`failed` 或换 runtime 时重新开跑。
+- **emulator**：`sdkmanager --install emulator <system-image>` → `sdkmanager --licenses`（stdin 恒 yes）→
+  `avdmanager create avd -n dsh-phone-avd -k <system-image> -d pixel_5 --force`（仅当 AVD 不存在；
+  已有 AVD 时快速 done，不重跑下载）。`image` 默认 `google_apis`（`system-images;android-34;google_apis;x86_64`），
+  可选 `aosp_atd` 快启动镜像。
+- **redroid**：只检查 `docker version` 与 `/dev/binder`；不安装 Docker，缺失时 `state=failed` 且 `log`
+  含来自 `src/runtime/install-guide.ts`（#38 单一数据源）的手动命令。
+- **attach**：只校验当前 `attach.endpoint`（connect + getprop，不落盘）；成功 `done`，失败 `failed`。
+- **安全**：只执行固定参数白名单命令；总超时 15 分钟（默认）；磁盘可用空间 <3GB 直接失败；
+  只创建/复用 `dsh-phone-avd`，不碰用户其它 AVD；不修改配置。
+- 错误：非法 `runtime`/`image` → 400 `E_BAD_REQUEST`；执行失败不抛 HTTP 错误，而是 200 +
+  `state=failed` + `error` + 日志（便于面板展示与重试）。
 
 ## 2. WebSocket `/dsh-phone/stream`
 
