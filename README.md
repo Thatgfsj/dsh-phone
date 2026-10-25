@@ -38,18 +38,28 @@
 
 ## 安装
 
-**v0.2.1 已可用。** 要求：DSH `>=0.2.1-rc.2 <0.3.0`、Node `>=20`；宿主浏览器需支持 WebCodecs（Chrome / Edge 等），不支持时自动回退 TinyH264 软解。源码安装见下，tarball 安装见 [docs/install.md](docs/install.md) §2。**安装/更新/启用插件后需重启 DSH 并刷新浏览器页面（F5）**，原因与排查见 [docs/install.md](docs/install.md) §1.1。
+**v0.2.1 已可用。** 要求：DSH `>=0.2.1-rc.2 <0.3.0`、Node `>=20`；宿主浏览器需支持 WebCodecs（Chrome / Edge 等），不支持时自动回退 TinyH264 软解。
+
+推荐安装 **GitHub Release 的预构建 tgz**（包内已有 `lib/`，**无需** `npm run build`）：
 
 ```sh
-git clone https://github.com/Thatgfsj/dsh-phone.git
-cd dsh-phone
-npm install
-npm run build                              # -> lib/（Host 逐文件转译 + Client 打包）
-node scripts/fetch-scrcpy-server.mjs       # -> assets/scrcpy-server.jar（校验 sha256）
-dsh plugin --profile web add .             # 目录安装，link 到当前 checkout
+# 1) 从 Releases 的 Assets 下载 dsh-phone-<version>.tgz（或 gh CLI）
+gh release download v0.2.1 -R Thatgfsj/dsh-phone -p 'dsh-phone-*.tgz'
+# 2) 安装到 web profile
+dsh plugin --profile web add ./dsh-phone-0.2.1.tgz
+# 3) 必需：确认 bundle 真的被选中，再重启 DSH + 刷新页面（F5）
+dsh --profile web --dump-config | grep -n -A 8 'dsh-phone'
 ```
 
-重启 DSH 并 **刷新浏览器页面（F5）** 后打开「设置 → 手机」。动态安装/更新/启用后为什么必须刷新（HMR 不会向已打开页面注入新的客户端模块）、以及刷新不中断会话的原因，见 [docs/install.md](docs/install.md) §1.1。完整步骤（含临时 profile 验证、升级、卸载、离线安装）见 [docs/install.md](docs/install.md)。
+- **没有 `dsh-phone` 行 = 半安装**（dependency 已装、但 `dsh.profile.bundles` 缺）：在 **Plugins 页**启用/重载，
+  或把 `dsh-phone` 加入 profile `package.json` 的 `dsh.profile.bundles` 后重启；四项对齐检查与
+  `scripts/install-check.mjs` 见 [docs/install.md](docs/install.md) §1.2。
+- **不要**执行 `dsh plugin add dsh-phone`：npm 上同名包属于另一个项目（PonyDevAI/dsh-phone），本仓库未发布 registry。
+- 改源码/调试：源码目录安装需 `npm install && npm run build`（否则无 `lib/` → 半安装）；从 `github:` 安装
+  需要 `prepare` 构建且 profile 批准构建脚本，仍推荐 Release tgz（见 [docs/install.md](docs/install.md) §2）。
+- **已有一台运行中的 emulator/真机**：优先 **attach 复用**（写 `attach.endpoint`），不要再起第二台；见 §1.4。
+- **安装/更新/启用后必须重启 DSH 并刷新页面（F5）**：两者作用不同，只做其中一个会出现「工具可用但没入口」或「页面有 UI 但 API 404」，详见 [docs/install.md](docs/install.md) §1.3。
+- 完整步骤（临时 profile 验证、升级、卸载、离线安装）见 [docs/install.md](docs/install.md)。
 
 ## 首次接入（一句话）
 
@@ -193,7 +203,10 @@ npm pack --dry-run
 ## 已知限制
 
 - **首版单实例**（`maxInstances: 1`）：工具无 serial 参数，不支持多设备。
-- **安装/更新/启用后需刷新页面**：DSH 不会把动态新增的客户端模块热注入已打开页面（HMR 只更新已加载模块）；工具可用但看不到手机入口时先刷新（F5），刷新不中断会话/手机实例。
+- **安装/更新/启用后需重启 DSH 并刷新页面**：重启让 Host 行与 bundle 生效，F5 让客户端模块图重算（HMR 不会向已打开页面注入新模块）；只做一半会出现「工具可用但没入口」或「有 UI 但 API 404」。刷新不中断会话/手机实例。
+- **npm 包名冲突**：npm 上的 `dsh-phone` 属于另一个项目（PonyDevAI/dsh-phone），本仓库未发布 registry；**禁止按名字安装**，必须用 Release tgz、源码目录或 git（见 [docs/install.md](docs/install.md) §1.1）。
+- **源码/git 安装可能半安装**：源码目录必须先 `npm run build`；从 `github:` 安装需要 `prepare` 且 profile 批准构建脚本，否则得到没有 `lib/` 的包；推荐 Release tgz，并按 §1.2 检查 `dsh.profile.bundles`。
+- **已有 emulator 实例不会自动复用**：启动 emulator runtime 可能再起一台同 AVD（端口顺延、资源翻倍）；有运行中的实例时优先 attach（见 [docs/install.md](docs/install.md) §1.4）。
 - **#40 部分完成**：真实 emulator attach 与 scrcpy 实连已通过（#58：Host WS 102 帧/10s、控制通道/中文输入/截图 PASS）；仍待人工/环境的项：emulator 自启（B 分支）、真实浏览器渲染/WebCodecs/TinyH264、redroid（本机无 Docker）、审批 UI 点击。详见 [docs/verification.md](docs/verification.md) §2/§7 与 §4/§5 待办。
 - **`cpuPct/memPct` 为尽力而为**：emulator/redroid/attach 各自采样（emulator `/proc`、redroid `docker stats`、attach `dumpsys`），取不到就省略字段，不阻断 status；不要当精确监控。
 - **`phone_screenshot` 的模型图片能力**：仅捕获 `attachments.saveImage` 失败并降级文本，未探测模型路由是否接受图片。
