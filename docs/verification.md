@@ -40,8 +40,8 @@ npm run verify
 | 7 | 安装冒烟（profile + dump） | \`node scripts/verify/verify-install.mjs\` | PASS | 本机 dsh + pnpm | 见 §3 证据 |
 | 8 | 安装冒烟（web apply） | 同上（阶段 B） | PASS | 临时隔离 \`DSH_HOME\` | 起 web 进程，验证 401/200 与 config 生效 |
 | 9 | redroid 真实运行时 | e2e | SKIP | 需 Docker + binder | 本机无 Docker |
-| 10 | emulator 真实运行时（attach 复用现有实例） | DSH_PHONE_E2E=1 node scripts/verify/verify-emulator.mjs | 部分 PASS / 1 缺陷（截图 PASS；Host WS 视频流 FAILED） | 需 127.0.0.1:5555 有 adbd；本机实例由用户 live 会话拉起 | 见 §7；缺陷 host-adb-raw-double-unwrap（issue #59） |
-| 11 | scrcpy 实连（stream 层直连对照） | 同上（脚本内直连 src/stream） | PASS（51 帧/5s，keyframe 1，control OK） | 真实 emulator | Host WS 路径被 #10 缺陷阻断；见 §7 |
+| 10 | emulator 真实运行时（attach 复用现有实例） | DSH_PHONE_E2E=1 node scripts/verify/verify-emulator.mjs | **PASS**（截图 + Host WS ready/DPH1 + 控制 + 释放） | 需 127.0.0.1:5555 有 adbd；本机实例由用户 live 会话拉起 | 见 §7；#59/#60 修复后重跑通过 |
+| 11 | scrcpy 实连（stream 层直连对照） | 同上（脚本内直连 src/stream） | PASS（704ms push/start；51 帧/5s，keyframe 1，control OK） | 真实 emulator | Host WS 路径同样 PASS（102 帧/10s）；见 §7 |
 | 12 | emulator 自启（B 分支） | — | SKIP | 需停用用户 live 实例 | 按 Lead 决策不 SIGTERM 用户实例；由 #40 人工清单覆盖 |
 | 13 | 真实 attach（TCP adbd） | 同上 | PASS（ADB 直连 + getprop + wm size） | 127.0.0.1:5555 | 本机为 emulator adbd，非独立真机 |
 | 14 | 真实浏览器页面 | 人工 | 人工待办 | 需浏览器/自动化 | 见 §5，不冒充通过 |
@@ -115,7 +115,7 @@ stderr 仅有宿主无关警告（本机 \`all_proxy\` 是 SOCKS 的提示），
 ## 4. 未覆盖项（不得视为通过）
 
 1. **真实运行时**：redroid 未验证（无 Docker）；emulator 自启（B 分支）未验证（需停用用户 live 实例）；本机 attach 复用已有 emulator 已实测（§7）。
-2. **Host WS 视频流**：真实设备上 FAILED（缺陷 host-adb-raw-double-unwrap，见 §7）；stream 层直连（pushServer/video/control）已实测 PASS。
+2. **Host WS 视频流**：真实设备上已实测 PASS（#59/#60 修复后：ready + DPH1，102 帧/10s、控制无 error）；修复前的 FAILED 记录见 §7.1。
 3. **phone_shell 审批 UI 往返**：waterfall 返回 ask 的逻辑已验；真实审批 UI 点击「允许一次/拒绝」未跑。
 4. **配置 volatile 热更新**：\`ctx.settings.mutate\` 真实写入 + 插件读到新值 + 配置行不重载，未在真实 dsh Web 会话验证（安装冒烟只验证了启动时 profile 用户层 config 生效）。
 5. **Agent token 通道**：\`agent.json\` 落盘/0600/loopback+无 Origin 判定已在真实进程验证 token 通道的"未认证 401"分支；但带 \`x-dsh-phone-token\` 的 \`POST /attach/verify\`、\`POST /agent/config\`、\`GET /status\` 未在真实设备/真实写配置场景跑通。
@@ -123,7 +123,7 @@ stderr 仅有宿主无关警告（本机 \`all_proxy\` 是 SOCKS 的提示），
 7. **\`ctx.connection.requestRejection\` 在自定义 prefix/upgrade 的真实行为**：安装冒烟验证了返回 401 的路径；401/403 的 Origin/跨站语义未在真实浏览器验证。
 8. **卸载/重载清理**：token 文件删除见 §3.4 观察项；HMR 重载后的旧 token 失效未验证。
 9. **本地平台限制**：本机无 Docker、无独立真机、无浏览器自动化；emulator + AVD + scrcpy jar 已具备（§7 实测）。
-10. **真实缺陷（本轮新发现，未在本 PR 修）**：Host PhoneService 把 AdbConnection.raw 传给 stream 层，stream 再读 .raw 得到 undefined，真实设备上 E_STREAM_START_FAILED: Cannot read properties of undefined (reading sync)；影响视频流与中文输入/触摸控制通道（截图不受影响）。详见 §7 与 issue #59。
+10. **真实缺陷（本轮发现，已由 #59/#60 修复并复测）**：Host PhoneService 曾把 AdbConnection.raw 传给 stream 层导致真实设备 E_STREAM_START_FAILED；修复后重跑 §7 全链路 PASS，缺陷记录保留在 §7.1 供追溯。
 
 ## 5. 人工待办（真实浏览器，禁止当成已通过）
 
@@ -183,21 +183,23 @@ Physical size: 720x1280）由**用户 live dsh web（3080）会话中的插件�
 profile（--no-open --port 0），onboarding 写 status=accepted / choice=attach +
 attach.endpoint=127.0.0.1:5555。
 
-命令：DSH_PHONE_E2E=1 node scripts/verify/verify-emulator.mjs（约 10s；退出码 1，因下述缺陷）
+复测：origin/main 29bc9b9（#59/#60 修复）合入后，2026-10-25 15:15 重跑，结果如下（修复前的失败记录见 §7.1）。
+
+命令：DSH_PHONE_E2E=1 node scripts/verify/verify-emulator.mjs（约 34s；退出码 0）
 
 | 检查项 | 结果 | 实测证据 |
 |---|---|---|
-| 临时 web apply + 同源鉴权 | PASS | /config 返回 runtime=attach, onboarding={accepted,attach}, attach.endpoint=127.0.0.1:5555, resolved=true |
-| GET /screenshot -> PNG | **PASS** | 720x1280，930517 bytes，attempts=1，706ms，保存 /tmp/dsh-phone-e2e/screenshot-*.png |
-| WS 握手 + hello | PASS | 带同源 Cookie 的 Upgrade 成功（101），hello 后先收 state |
-| Host WS 视频流 ready/DPH1 | **FAILED（真实缺陷）** | 收到 {"type":"error","code":"E_STREAM_START_FAILED","message":"Cannot read properties of undefined (reading sync)","retryable":true}，无 ready/无二进制帧 |
-| stream 层直连对照 | **PASS** | startStream 863ms（含 pushServer），5s 收 51 帧（~10fps）、keyframe 1、video 408x720、deviceWidth/Height=720/1280；injectKey/touch/text 全成功 |
-| Host 释放/状态 | PASS（释放 N/A） | WS 未建立流；GET /status 仍 running（Host 失败未影响实例）；viewer 释放不适用 |
+| 临时 web apply + 同源鉴权 | PASS | /config 返回 enabled=true, runtime=attach, onboarding={accepted,attach}, attach.endpoint=127.0.0.1:5555, resolved=true |
+| GET /screenshot -> PNG | **PASS** | 720x1280，708213 bytes，attempts=1，775ms，保存 /tmp/dsh-phone-e2e/screenshot-*.png |
+| WS 握手 + hello | PASS | 带同源 Cookie 的 Upgrade 成功（101），hello 后收 state/ready |
+| Host WS 视频流 ready/DPH1 | **PASS** | ready: codec=h264, 720x1280, deviceWidth/Height=720/1280, maxSize=720, maxFps=15；10s 收 **102 帧**（config=1, key=1, delta=100，约 10.2fps），DPH1 头全部合法 |
+| stream 层直连对照 | **PASS** | startStream 704ms（含 pushServer），5s 收 51 帧（~10fps）、keyframe 1、video 408x720、deviceWidth/Height=720/1280；injectKey/touch/text 全成功 |
+| Host 释放/状态 | **PASS** | WS 关闭 + 6.5s 后 GET /status 仍 running；二次 WS 连接重建成功并收到 31 帧（viewer 已释放） |
 | 清理 | PASS | 临时 web 退出码 0、隔离 home/profile 删除；emulator 仍可达=true（未停止用户实例） |
 | emulator 自启（B 分支） | SKIP | 5554/5555 被用户 live 实例占用；按 Lead 决策不 SIGTERM 用户实例，需停用后再由人工清单覆盖 |
 | 真实浏览器渲染/WebCodecs/TinyH264 | 人工待办 | 见 §5，不冒充通过 |
 
-### 7.1 缺陷记录：host-adb-raw-double-unwrap
+### 7.1 缺陷记录：host-adb-raw-double-unwrap（已修复）
 
 - 现象：真实设备上右侧栏 WS 视频流启动失败，E_STREAM_START_FAILED: Cannot read properties of undefined (reading sync)。
 - 定位：Host 接线把 AdbConnection.raw（已是 Tango Adb 实例）传给 stream 层
@@ -205,7 +207,7 @@ attach.endpoint=127.0.0.1:5555。
   src/stream/scrcpy.ts 期望 AdbConnection 并再次读 adb.raw -> undefined，
   AdbScrcpyClient.pushServer(undefined) 读 .sync 抛错。
 - 影响：视频流（WS）与 phone_input_text/触摸控制通道在真实设备不可用；截图/工具 shell 不受影响。
-- 处理：**本 PR 不修**（按 Lead 决策）；已记录 issue #59，修复后重跑本脚本即可把 §7 的 FAILED 转 PASS。
+- 处理：本 PR 不修；已记录 issue #59，由 #59/#60 修复（service.ts 传 AdbConnection 而非 .raw），合并后本脚本重跑 **全链路 PASS**（见上表），缺陷保留记录供追溯。
 
 ### 7.2 复现与证据
 
