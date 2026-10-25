@@ -138,6 +138,10 @@ activity/window/display/battery/cpuinfo/meminfo/gfxinfo/input/power/wifi。
   `startControlOnly`（只建 control socket，不编码视频）——满足 SPEC §3.6「无人看不开流」。
 - **断连**：`AdbConnection.disconnected` → 关闭会话 + `lifecycle.notifyDisconnected` → state=stopped，
   下次交互自动重连。
+- **就绪判定（issue #67）**：ADB 连上后还会等 `sys.boot_completed=1` +
+  `init.svc.bootanim=stopped` + `pm path android`（`waitBootCompleted`，wiring 开启，超时 90s）；
+  boot 超时/失败会调用 `adapter.cancelStart()` 清理半启动实例（避免孤儿 emulator）。
+- **观看也算交互（issue #67）**：视频流有观众时每 30s 节流 `lifecycle.touch()`，观看中不会 idle→pause。
 - **冷启动重试（issue #44）**：`#start/#resume` 建立 ADB 连接时，若握手/连接失败按
   500ms→1s→2s→4s→8s 退避重试，预算 `bootTimeoutMs − 20s`（默认 100s）；耗尽才抛错并保留最后一次原因。
   截图失败（空输出/非法 base64/非 PNG）在设备内重试 3 次，仍失败则 `E_DEVICE_NOT_READY`

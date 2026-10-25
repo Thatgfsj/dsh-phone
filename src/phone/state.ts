@@ -33,7 +33,8 @@ export interface LifecycleTimings {
 }
 
 export const DEFAULT_LIFECYCLE_TIMINGS: LifecycleTimings = {
-  idleTimeoutMs: 300_000,
+  // issue #67：5min 太短（暂停=杀进程+快照，恢复 ~10-20s）；默认 20min
+  idleTimeoutMs: 1_200_000,
   pausedTimeoutMs: 1_800_000,
   bootTimeoutMs: 120_000,
 }

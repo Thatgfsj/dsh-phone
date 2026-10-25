@@ -102,7 +102,7 @@ async function createAvd(options: AvdResolveOptions): Promise<void> {
 
   const result = await options.runner.run(
     avdmanager,
-    ['create', 'avd', '-n', AVD_NAME, '-k', systemImage, '--force'],
+    ['create', 'avd', '-n', AVD_NAME, '-k', systemImage, '-d', 'medium_phone', '--force'],
     { timeoutMs: 60_000 },
   )
   if (result.code !== 0) {

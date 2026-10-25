@@ -36,7 +36,7 @@ test('Config：SPEC §6.1 全字段默认值', () => {
   assert.equal(config.stream.maxFps, 15)
   assert.equal(config.stream.bitrate, 2000000)
 
-  assert.equal(config.lifecycle.idleTimeoutMs, 300000)
+  assert.equal(config.lifecycle.idleTimeoutMs, 1200000)
   assert.equal(config.lifecycle.pausedTimeoutMs, 1800000)
 
   assert.equal(config.limits.maxInstances, 1)

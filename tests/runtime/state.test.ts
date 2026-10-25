@@ -169,11 +169,12 @@ describe('PhoneLifecycle：idle / paused 分级休眠', () => {
   test('交互重置 idle 计时（touch）', async () => {
     const { lifecycle, clockAdvance } = setup()
     await lifecycle.ensureRunning()
-    await clockAdvance(240_000)
+    const idle = DEFAULT_LIFECYCLE_TIMINGS.idleTimeoutMs
+    await clockAdvance(idle - 60_000)
     lifecycle.touch()
-    await clockAdvance(240_000)
+    await clockAdvance(idle - 60_000)
     assert.equal(lifecycle.state, 'running')
-    await clockAdvance(60_000)
+    await clockAdvance(120_000)
     assert.equal(lifecycle.state, 'paused')
   })
 

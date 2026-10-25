@@ -15,7 +15,13 @@ export type RuntimeSetting = 'auto' | RuntimeKind
 export type PhoneState = 'stopped' | 'booting' | 'running' | 'paused'
 
 /** booting 进度阶段（issue #56）：供 /status 与客户端进度层展示，向后兼容（可选）。 */
-export type BootPhase = 'launching' | 'waiting-adbd' | 'connecting-adb' | 'ready'
+export type BootPhase =
+  | 'launching'
+  | 'waiting-adbd'
+  | 'connecting-adb'
+  | 'waiting-boot'
+  | 'saving-snapshot'
+  | 'ready'
 
 export interface RuntimeProbe {
   ok: boolean
@@ -56,6 +62,11 @@ export interface RuntimeAdapter {
   resume(): Promise<void>
   stop(): Promise<void>
   status(): Promise<RuntimeStatus>
+  /**
+   * 启动被取消（boot 超时/规则失败）时清理半个实例，避免孤儿进程（issue #67）。
+   * 可选：不实现则视为 no-op。
+   */
+  cancelStart?(): Promise<void>
 }
 
 /* ---------------------------------- 配置 ---------------------------------- */
@@ -130,6 +141,8 @@ export interface CommandResult {
 export interface SpawnDetachedOptions {
   cwd?: string
   env?: Record<string, string>
+  /** 把子进程 stdout/stderr 追加到该文件（issue #67：FATAL 可见）。 */
+  logFile?: string
 }
 
 export interface SpawnedProcess {
@@ -177,6 +190,24 @@ export interface RuntimeEnvironment {
    * → ANDROID_HOME/ANDROID_SDK_ROOT → PATH。取不到返回 undefined。
    */
   findAvdManager(emulatorPath?: string): Promise<string | undefined>
+  /** 读取文件最后 N 行（启动失败时把 emulator FATAL 日志带给用户，issue #67）。 */
+  readFileTail(path: string, lines?: number): Promise<string | undefined>
+  /** 检查 AVD quick-boot 快照是否完整（snapshot.pb/ram 文件大小，issue #67）。 */
+  inspectAvdSnapshot(avdName: string, snapshotName?: string): Promise<{
+    exists: boolean
+    valid: boolean
+    reason?: string
+  }>
+  /** 删除损坏的 AVD 快照目录（无效快照会导致 emulator 启动失败）。 */
+  removeAvdSnapshot(avdName: string, snapshotName?: string): Promise<void>
+  /** 实例启动日志路径（/tmp/dsh-phone-emulator-<port>.log）。 */
+  emulatorLogPath(consolePort: number): string
+  /** 选择 GPU 模式（issue #67：有 Vulkan/DRM 时 angle_indirect，否则 swiftshader_indirect）。 */
+  detectGpuMode(): Promise<string>
+  /** 读取 ~/.emulator_console_auth_token（emulator console 认证 token；取不到 undefined）。 */
+  readEmulatorConsoleToken(): Promise<string | undefined>
+  /** AVD 是否已有指定名称的 quick-boot 快照（决定启动是否走快照）。 */
+  hasAvdSnapshot(avdName: string, snapshotName?: string): Promise<boolean>
   /**
    * 采样宿主进程 CPU/内存占用（issue #56，仅 Linux /proc；取不到返回 {}）。
    * CPU% 需要两次采样，首次调用通常只返回 memPct。

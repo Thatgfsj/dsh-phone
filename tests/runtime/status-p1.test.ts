@@ -25,6 +25,7 @@ interface Control {
 function makeHarness(options: {
   deferred?: boolean
   shell?: (command: string) => Promise<string>
+  waitBootCompleted?: boolean
 } = {}): { service: PhoneService; control: Control } {
   let releaseGate: (() => void) | undefined
   const gate = options.deferred
@@ -95,6 +96,8 @@ function makeHarness(options: {
     createLifecycle: (hooks, timings) => new PhoneLifecycle(hooks, timings, new ManualClock()),
     sleep: async () => undefined,
     bootRetryDelays: () => [],
+    waitBootCompleted: options.waitBootCompleted === true,
+    bootReadyTimeoutMs: 5_000,
   }
   return { service: new PhoneService(deps), control }
 }
@@ -146,6 +149,41 @@ describe('attach cpuPct/memPct（issue #56，尽力而为）', () => {
     assert.equal(status.state, 'running')
     assert.equal(status.cpuPct, undefined)
     assert.equal(status.memPct, undefined)
+    await service.dispose()
+  })
+})
+
+
+describe('boot_completed + pm ready（issue #67，可选就绪判定）', () => {
+  test('waitBootCompleted=true：getprop 变 1 且 pm 可用后才算 running', async () => {
+    const shells: string[] = []
+    let bootChecks = 0
+    const { service } = makeHarness({
+      waitBootCompleted: true,
+      shell: async (command) => {
+        shells.push(command)
+        if (command === 'getprop sys.boot_completed') {
+          bootChecks += 1
+          return bootChecks >= 2 ? '1' : ''
+        }
+        if (command === 'getprop init.svc.bootanim') return 'stopped'
+        if (command === 'pm path android') return 'package:/system/framework/framework-res.apk'
+        return ''
+      },
+    })
+    await service.ensureRunning()
+    assert.ok(shells.filter((command) => command === 'getprop sys.boot_completed').length >= 2)
+    assert.ok(shells.includes('getprop init.svc.bootanim'))
+    assert.ok(shells.includes('pm path android'))
+    const status = await service.status()
+    assert.equal(status.state, 'running')
+    await service.dispose()
+  })
+
+  test('waitBootCompleted=false（默认）：不额外轮询 shell', async () => {
+    const { service, control } = makeHarness()
+    await service.ensureRunning()
+    assert.equal(control.shells.includes('getprop sys.boot_completed'), false)
     await service.dispose()
   })
 })
