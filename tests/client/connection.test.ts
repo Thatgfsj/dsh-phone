@@ -5,6 +5,7 @@ import {
   FRAME_MAGIC,
   NORMAL_CLOSURE,
   ReconnectBackoff,
+  STREAM_REPLACED_CLOSURE,
   VisibilityGate,
   helloMessage,
   keyMessage,
@@ -451,3 +452,31 @@ test('StreamClient: a reconnect drops the previous connection error frame', () =
   assert.deepEqual(errors, [{ code: 'E_AUTH', message: 'unauthorized' }])
 })
 
+test('StreamClient: 4001 replaced is terminal, reported and never auto-reconnected (issue #73)', () => {
+  FakeSocket.instances.length = 0
+  const clock = new FakeClock()
+  const errors: { code: string; message: string; retryable: boolean }[] = []
+  const states: StreamState[] = []
+  const client = new StreamClient({
+    createSocket: (url) => new FakeSocket(url),
+    now: () => clock.now,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    backoff: new ReconnectBackoff({ random: () => 0.5 }),
+    onFrame: () => {},
+    onMessage: () => {},
+    onState: (state) => states.push(state),
+    onError: (failure) => errors.push(failure),
+  })
+  client.start(true)
+  const socket = FakeSocket.at(0)
+  socket.open()
+  socket.shutdown(STREAM_REPLACED_CLOSURE)
+  assert.equal(client.state, 'closed')
+  assert.deepEqual(states.at(-1), 'closed')
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0]!.code, 'E_STREAM_REPLACED')
+  assert.equal(errors[0]!.retryable, false)
+  clock.advance(60_000)
+  assert.equal(FakeSocket.instances.length, 1, 'no mutual reconnect fight after being replaced')
+})

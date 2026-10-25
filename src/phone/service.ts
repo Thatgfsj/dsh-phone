@@ -153,6 +153,8 @@ export interface PhoneServiceDeps {
 }
 
 const DEFAULT_STREAM_GRACE_MS = 5_000
+/** viewer 存活期间的心跳（issue #73）：周期性 touch，idle 不应在有人观看时休眠。 */
+const VIEWER_HEARTBEAT_MS = 60_000
 /** attach 资源占用采样缓存（issue #56，避免 /status 轮询频繁 shell）。 */
 const USAGE_CACHE_MS = 5_000
 /**
@@ -210,6 +212,7 @@ export class PhoneService implements PhoneOperations {
   #viewers = 0
   #streamToken = 0
   #closeTimer: (() => void) | undefined
+  #viewerHeartbeat: (() => void) | undefined
   #ensurePromise: Promise<void> | undefined
   #queue: Promise<unknown> = Promise.resolve()
   #serialPending = 0
@@ -348,7 +351,7 @@ export class PhoneService implements PhoneOperations {
 
   key(name: string): Promise<void> {
     return this.#serial(async () => {
-      await this.ensureRunning()
+      await this.ensureRunning() // running 快路径会 touch（面板按键算交互）
       await this.#requireDevice().key(name)
     })
   }
@@ -376,12 +379,14 @@ export class PhoneService implements PhoneOperations {
 
   /** 中文文本注入：scrcpy 控制通道 INJECT_TEXT（禁止 shell input text）。 */
   async inputText(text: string): Promise<void> {
+    this.#lifecycle.touch() // 面板输入算交互（issue #73）
     const session = await this.#controlSession()
     await session.injectText(text)
   }
 
   /** scrcpy 触摸注入（与 lifecycle.touch 的 idle 唤醒信号区分，见 contracts.ts）。 */
   async touchScreen(action: 'down' | 'move' | 'up', x: number, y: number): Promise<void> {
+    this.#lifecycle.touch() // 面板触摸算交互（issue #73）
     const session = await this.#controlSession()
     await session.injectTouch(action, x, y)
   }
@@ -391,11 +396,14 @@ export class PhoneService implements PhoneOperations {
   async startStream(sink: StreamSink): Promise<() => Promise<void>> {
     await this.ensureRunning()
     const config = this.#deps.config()
-    const token = ++this.#streamToken
+    // issue #73：每次视频会话一个代际；旧 viewer 的 release 不得关掉新流。
+    const generation = ++this.#streamToken
     this.#cancelClose()
+    this.#stopViewerHeartbeat()
     if (this.#stream) {
       const old = this.#stream
       this.#stream = undefined
+      this.#viewers = 0
       await old.close().catch(() => undefined)
     }
     await this.#control?.close().catch(() => undefined)
@@ -407,18 +415,23 @@ export class PhoneService implements PhoneOperations {
       sink,
       config: config.stream,
     })
-    if (token !== this.#streamToken) {
+    if (generation !== this.#streamToken) {
       await session.close().catch(() => undefined)
-    } else {
-      this.#stream = session
-      this.#viewers = 1
+      return async () => undefined
     }
+    this.#stream = session
+    this.#viewers += 1
+    this.#armViewerHeartbeat() // viewer 存活 → 周期性 touch，idle 5min 不会关流（issue #73）
     let released = false
     return async () => {
       if (released) return
       released = true
+      if (generation !== this.#streamToken) return // 旧代际的 release 忽略
       this.#viewers = Math.max(0, this.#viewers - 1)
-      if (this.#viewers === 0) this.#scheduleClose()
+      if (this.#viewers === 0) {
+        this.#stopViewerHeartbeat()
+        this.#scheduleClose()
+      }
     }
   }
 
@@ -448,6 +461,7 @@ export class PhoneService implements PhoneOperations {
     if (this.#disposed) return
     this.#disposed = true
     this.#cancelClose()
+    this.#stopViewerHeartbeat()
     await this.#stream?.close().catch(() => undefined)
     await this.#control?.close().catch(() => undefined)
     await this.#disconnectAdb()
@@ -477,6 +491,11 @@ export class PhoneService implements PhoneOperations {
   }
 
   async #pause(): Promise<void> {
+    // issue #73：viewer 存活时不得 idle 休眠/关流。抛错让 PhoneLifecycle 保持 running 并重排 idle 计时。
+    if (this.#viewers > 0) {
+      this.#armViewerHeartbeat()
+      throw new Error('viewer 正在观看，跳过 idle 休眠（issue #73）')
+    }
     await this.#closeSessions()
     await this.#disconnectAdb()
     const handle = await this.#runtime()
@@ -500,10 +519,9 @@ export class PhoneService implements PhoneOperations {
       // 探测本身失败的错误由 #runtime 缓存（30s 防抖），这里不再覆盖。
       this.#dropHandle()
       void this.#disconnectAdb()
-    } else {
-      this.#handleError = error
-      this.#handleErrorAt = this.#now()
     }
+    // 注意：pause/stop 失败不写入 #handleError（那是运行时探测失败缓存，issue #36/#73）——
+    // viewer 存活时的 pause 否决不该污染 phone_status/探测防抖。
     this.#emitStatus()
   }
 
@@ -759,6 +777,7 @@ export class PhoneService implements PhoneOperations {
 
   async #closeSessions(): Promise<void> {
     this.#cancelClose()
+    this.#stopViewerHeartbeat()
     const stream = this.#stream
     const control = this.#control
     this.#stream = undefined
@@ -767,6 +786,29 @@ export class PhoneService implements PhoneOperations {
     this.#streamToken += 1
     if (stream) await stream.close().catch(() => undefined)
     if (control) await control.close().catch(() => undefined)
+  }
+
+  /** viewer 存活心跳：每 60s touch 生命周期，idle 计时不会在有人观看时到期（issue #73）。 */
+  #armViewerHeartbeat(): void {
+    this.#stopViewerHeartbeat()
+    const schedule = this.#deps.schedule ?? ((callback, delayMs) => {
+      const timer = setTimeout(callback, delayMs)
+      timer.unref?.()
+      return () => clearTimeout(timer)
+    })
+    this.#viewerHeartbeat = schedule(() => {
+      this.#viewerHeartbeat = undefined
+      if (this.#viewers <= 0 || this.#disposed) return
+      this.#lifecycle.touch()
+      this.#armViewerHeartbeat()
+    }, VIEWER_HEARTBEAT_MS)
+  }
+
+  #stopViewerHeartbeat(): void {
+    if (this.#viewerHeartbeat) {
+      this.#viewerHeartbeat()
+      this.#viewerHeartbeat = undefined
+    }
   }
 
   #scheduleClose(): void {

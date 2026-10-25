@@ -5,6 +5,10 @@
  * （吸收 tab 切换抖动）；只允许一个 scrcpy 会话，多个 viewer 共享同一路码流。
  *
  * 本类导出给 host 的 PhoneService 使用：`addViewer(sink)` 返回 release 函数。
+ *
+ * issue #73 备注：当前生产 Host 使用自带「viewer 计数 + 代际 + 心跳」实现（因为需要与
+ * scrcpy controller/控制通道共享同一 handle）；本类保留为独立引用计数实现与测试夹具，
+ * 未被 `src/phone/service.ts` 直接实例化。
  */
 
 import type { StreamHandle, StreamSink } from './types.ts'

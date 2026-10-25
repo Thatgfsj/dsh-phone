@@ -107,7 +107,11 @@ byte 8..   H.264 Annex-B payload（与 scrcpy packet.data 逐字节一致）
 - 触摸坐标：客户端按 `ready.deviceWidth/deviceHeight` 把面板坐标换算为**设备坐标**；Host 的
   `ScrcpyController` 再按 `设备尺寸 → 视频尺寸`（`maxSize` 降采样）等比换算为 scrcpy 视频坐标注入，
   避免 1080x2400 真机在 720p 流下偏移。`wm size` 在每次 scrcpy 启动时查询一次并按 endpoint 缓存。
-- 同一时刻只保留一条流连接：新连接到来时旧连接以 code 1000 关闭（避免重复 viewer）。
+- 同一时刻只保留一条流连接：新连接到来时旧连接以 **4001** 关闭（issue #73）；客户端据此显示
+  「已在另一处打开」并停止自动重连，避免双页互踢。
+- **服务端空闲超时（issue #73）**：60s 未收到客户端任何消息 → 1011 `E_STREAM_IDLE`（半开连接清理）。
+- **背压（issue #73）**：发送积压超过 `maxBufferedBytes` 时 delta 丢弃；configuration/keyframe 超限 →
+  1011 `E_STREAM_BACKPRESSURE` 断开重连（config/keyframe 丢了会黑屏，不能静默丢）。
 - socket close/error → 立即 release viewer；Session 在 0 viewer 后 5s 停流。
 - 视频会话异常（启动失败/读失败/服务端退出）→ `{type:'error',code:'E_STREAM_START_FAILED',retryable:true}`
   后以 1011 关闭；客户端按协议自动重连。
@@ -160,9 +164,12 @@ registerStreamRoute(ctx, { getService: () => phoneService })
 - `startStream(adb, options, sink, { video?: false })` 与 `startControlOnly(adb, options)` 等价：
   **video=false 时不开 video socket/不启动编码**，返回的 `StreamHandle.controller` 仍可用
   （injectText/injectTouch/injectKey），`info` 为空。
-- `StreamSession`（session.ts）由 PhoneService 持有：
-  `new StreamSession({ start: (sink) => startStream(adb, config.stream, sink) })`；
-  `addViewer(sink)` 返回 release，由 PhoneService.startStream 透传给 ws 层。
+- **`StreamSession`（session.ts）当前未被生产接线使用（issue #73）**：Host `PhoneService.startStream`
+  自己维护 viewer 计数 + 代际（旧 release 忽略）+ 60s viewer 心跳（有人观看时 touch 生命周期，idle
+  不会休眠）；`StreamSession` 保留为独立引用计数实现与测试夹具，后续如需多 viewer 扇出再切换。
+  当前生产为「单 WS 连接（4001 替换旧页面）+ Host 计数」。
+- **viewer 存活期间算交互**：Host 每 60s `lifecycle.touch()`；面板 touch/key/text 也 touch；
+  idle 暂停前若仍有 viewer 会被否决（保持 running，不关流）。
 - `AdbConnection` 以 `import type` 从 `../adb/types.ts` 引入（runtime #3 合并后的实际位置；
   transport.ts 只 import 未 re-export。冻结字段见 docs/architecture.md §3.2：`raw: Adb` 供 scrcpy 使用）；
   本 PR 不复制实现、不修改 ADB 层。
@@ -185,7 +192,7 @@ node --test tests/stream/*.test.ts
 
 覆盖：DPH1 字节序/类型映射/pts 回绕与负值/超大包、控制消息映射与中文文本、RFC 6455 握手向量与
 掩码/分片/ping-pong/close、WS 鉴权拒绝、hello 校验与超时、viewer 计数与 5s 宽限、**断开/隐藏清理**、
-**新连接替换旧连接**、异常流错误码、`wm size` 解析/缓存与 ready device 字段序列化、触摸设备→视频坐标换算、
+**新连接替换旧连接（4001）**、**服务端 60s 空闲超时**、**背压（delta 丢弃 / keyframe 1011）**、异常流错误码、`wm size` 解析/缓存与 ready device 字段序列化、触摸设备→视频坐标换算、
 scrcpy-server 下载脚本的 sha256/--check/参数解析、**jar 懒下载**（已存在跳过、成功、sha256 失败删除、
 下载器异常、超时重试、并发 single-flight、环境变量覆盖路径）。
 全部使用假 adb/假 socket/假下载器，不依赖真机、scrcpy 二进制或网络（下载脚本测试只做本地文件校验）。

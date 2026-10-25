@@ -236,7 +236,7 @@ test('hello visible:false 不开流；socket 关闭触发 release', async () => 
   assert.equal(state.releases, 1)
 })
 
-test('新连接替换旧连接：旧连接收到 1000 关闭', async () => {
+test('新连接替换旧连接：旧连接收到 4001 关闭（issue #73 专用 code）', async () => {
   const { ctx, route } = makeCtx()
   const { state, service } = makeService()
   registerStreamRoute(ctx, { getService: () => service })
@@ -251,9 +251,48 @@ test('新连接替换旧连接：旧连接收到 1000 关闭', async () => {
   open(route(), second)
   await flush()
   await send(second, { type: 'hello', protocol: 1, viewport: { w: 1, h: 1 } })
-  assert.equal(closeCode(first), 1000)
+  assert.equal(closeCode(first), 4001)
   assert.equal(state.releases, 1)
   assert.equal(state.starts, 2)
+})
+
+test('客户端消息空闲超过 idleTimeoutMs → 1011 E_STREAM_IDLE（issue #73）', async () => {
+  const { ctx, route } = makeCtx()
+  const { service } = makeService()
+  registerStreamRoute(ctx, { getService: () => service, idleTimeoutMs: 40 })
+  const socket = new FakeSocket()
+  open(route(), socket)
+  await flush()
+  await send(socket, { type: 'hello', protocol: 1, viewport: { w: 1, h: 1 } })
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  await flush()
+  assert.equal(closeCode(socket), 1011)
+  const error = textFrames(socket.bytes()).find((message) => message.type === 'error')
+  assert.equal(error?.code, 'E_STREAM_IDLE')
+})
+
+test('背压：delta 丢弃；configuration/keyframe 超限 → 1011 E_STREAM_BACKPRESSURE（issue #73）', async () => {
+  const { ctx, route } = makeCtx()
+  const { state, service } = makeService()
+  registerStreamRoute(ctx, { getService: () => service, maxBufferedBytes: 8 })
+  const socket = new FakeSocket()
+  open(route(), socket)
+  await flush()
+  await send(socket, { type: 'hello', protocol: 1, viewport: { w: 1, h: 1 } })
+  assert.ok(state.sink)
+
+  // 积压超限：delta 直接丢（不关闭）
+  socket.writableLength = 16
+  state.sink!.video(new Uint8Array([1, 2, 3]), { keyframe: false, pts: 1n })
+  await flush()
+  assert.equal(closeCode(socket), undefined)
+
+  // keyframe 丢会黑屏 → 断开让客户端重连拿新 configuration/keyframe
+  state.sink!.video(new Uint8Array([4, 5, 6]), { keyframe: true, pts: 2n })
+  await flush()
+  assert.equal(closeCode(socket), 1011)
+  const error = textFrames(socket.bytes()).find((message) => message.type === 'error')
+  assert.equal(error?.code, 'E_STREAM_BACKPRESSURE')
 })
 
 test('hello 超时按 1008 关闭', async () => {

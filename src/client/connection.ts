@@ -18,6 +18,8 @@ export const FRAME_MAGIC = 0x44504831
 export const FRAME_HEADER_BYTES = 8
 /** WebSocket close code used when the panel stops being visible. */
 export const NORMAL_CLOSURE = 1000
+/** Server uses this code when a newer page replaced this stream connection (issue #73). */
+export const STREAM_REPLACED_CLOSURE = 4001
 
 export type VideoFrameKind = 'configuration' | 'keyframe' | 'delta' | 'audio' | 'control'
 

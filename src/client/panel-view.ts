@@ -121,7 +121,11 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
         },
         onError: (failure) =>
           setError(
-            failure.code === 'E_AUTH' ? t('panel.error.auth') : t('panel.error.stream', { message: failure.message }),
+            failure.code === 'E_AUTH'
+              ? t('panel.error.auth')
+              : failure.code === 'E_STREAM_REPLACED'
+                ? t('panel.error.replaced')
+                : t('panel.error.stream', { message: failure.message }),
           ),
       })
       clientRef.current = client

@@ -21,8 +21,12 @@ import { errorMessage } from './ws-connection.ts'
 export const STREAM_PATH = '/dsh-phone/stream'
 /** hello 必须在该时间内到达（docs/protocol.md：首条必须是 hello）。 */
 export const DEFAULT_HELLO_TIMEOUT_MS = 5_000
-/** 后端 socket 积压超过该值时丢弃 delta 帧，等下一个 keyframe（不拆包、不合包）。 */
+/** 后端 socket 积压超过该值时：delta 丢弃；configuration/keyframe 直接断开让客户端重连（issue #73）。 */
 export const DEFAULT_MAX_BUFFERED_BYTES = 4 * 1024 * 1024
+/** 连接空闲（超过该时间未收到客户端任何消息）→ 1011 断开（issue #73）。 */
+export const DEFAULT_IDLE_TIMEOUT_MS = 60_000
+/** 同源旧连接被新页面替换时的专用 close code（issue #73：避免客户端当作普通断线无限互踢）。 */
+export const STREAM_REPLACED_CLOSE = 4001
 
 export interface StreamLogger {
   warn(message: string): void
@@ -45,6 +49,8 @@ export interface StreamUpgradeDeps {
   getStreamOptions?: () => StreamOptions
   helloTimeoutMs?: number
   maxBufferedBytes?: number
+  /** 客户端消息空闲超时（默认 60s），用于清理半开连接。 */
+  idleTimeoutMs?: number
   logger?: StreamLogger
 }
 
@@ -68,6 +74,7 @@ export interface StreamRouteDeps {
   getStreamOptions?: () => StreamOptions
   helloTimeoutMs?: number
   maxBufferedBytes?: number
+  idleTimeoutMs?: number
   logger?: StreamLogger
 }
 
@@ -108,13 +115,15 @@ export function createStreamUpgradeHandler(
     const service = deps.resolveService ? await deps.resolveService() : deps.service
     if (!service) return rejectUpgrade(socket, 503, 'phone service unavailable')
 
-    closeActive(1000, 'replaced')
+    // issue #73：专用 close code，客户端据此提示「已在另一处打开」且不再自动重连互踢
+    closeActive(STREAM_REPLACED_CLOSE, 'replaced')
     const ws = WebSocketConnection.accept(req, socket, head)
     const client = new StreamConnection(ws, {
       service,
       options: deps.getStreamOptions?.() ?? DEFAULT_STREAM_OPTIONS,
       helloTimeoutMs: deps.helloTimeoutMs ?? DEFAULT_HELLO_TIMEOUT_MS,
       maxBufferedBytes: deps.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES,
+      idleTimeoutMs: deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
       logger,
       onClosed: () => {
         if (active === client) active = undefined
@@ -151,6 +160,7 @@ export function registerStreamRoute(ctx: StreamRouteContext, deps: StreamRouteDe
     getStreamOptions: deps.getStreamOptions,
     helloTimeoutMs: deps.helloTimeoutMs,
     maxBufferedBytes: deps.maxBufferedBytes,
+    idleTimeoutMs: deps.idleTimeoutMs,
     logger: deps.logger ?? ctx.logger,
   })
   return ctx.webServer.registerUpgrade({ path: STREAM_PATH, handler })

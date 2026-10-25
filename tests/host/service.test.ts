@@ -336,9 +336,9 @@ test('startStream：开视频会话并引用计数，release 后按宽限期关�
 
   await release()
   assert.equal(harness.sessions[0]!.closeCalls, 0)
-  assert.equal(harness.schedule.length, 1)
-  assert.equal(harness.schedule[0]!.ms, 5000)
-  harness.schedule[0]!.callback!()
+  const closeTimer = harness.schedule.find((item) => item.ms === 5000)
+  assert.ok(closeTimer, 'release 后必须安排 5s 宽限关流')
+  closeTimer!.callback!()
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal(harness.sessions[0]!.closeCalls, 1)
 })
@@ -721,4 +721,68 @@ test('runtimeConfigFingerprint：attach.endpoint/resolved 变化也计入指纹'
   }
   assert.notEqual(runtimeConfigFingerprint(base), runtimeConfigFingerprint(changedEndpoint))
   assert.notEqual(runtimeConfigFingerprint(base), runtimeConfigFingerprint(changedResolved))
+})
+/* --------------- issue #73：viewer 引用计数/代际/心跳/暂停否决 --------------- */
+
+test('viewer 存活心跳：周期性 touch，idle 不会在有人观看时休眠', async () => {
+  const harness = makeService()
+  const sink = { video: () => {}, error: () => {} }
+  await harness.service.startStream(sink)
+  const heartbeat = harness.schedule.find((item) => item.ms === 60_000)
+  assert.ok(heartbeat, 'startStream 后必须安排 60s viewer 心跳')
+  const touchesBefore = harness.lifecycle.touchCalls
+  heartbeat!.callback!()
+  assert.ok(harness.lifecycle.touchCalls > touchesBefore, '心跳必须 touch 生命周期')
+  assert.equal(harness.sessions[0]!.closeCalls, 0, '心跳不得关流')
+  assert.ok(harness.schedule.some((item) => item.ms === 60_000), '心跳必须续期')
+})
+
+test('viewer 输入/按键算交互（issue #73）', async () => {
+  const harness = makeService()
+  await harness.service.startStream({ video: () => {}, error: () => {} })
+  const touchesBefore = harness.lifecycle.touchCalls
+  await harness.service.touchScreen('down', 10, 20)
+  await harness.service.key('HOME')
+  await harness.service.inputText('你好')
+  assert.equal(harness.lifecycle.touchCalls, touchesBefore + 3)
+})
+
+test('旧代际 release 不得关掉新流（issue #73）', async () => {
+  const harness = makeService()
+  const releaseFirst = await harness.service.startStream({ video: () => {}, error: () => {} })
+  const releaseSecond = await harness.service.startStream({ video: () => {}, error: () => {} })
+
+  // 第二次 startStream 替换旧会话
+  assert.equal(harness.sessions.length, 2)
+  assert.equal(harness.sessions[0]!.closeCalls, 1, '旧会话被替换关闭')
+  assert.equal(harness.sessions[1]!.closeCalls, 0)
+
+  await releaseFirst() // 旧代际 release：必须忽略
+  assert.equal(harness.sessions[1]!.closeCalls, 0)
+  assert.equal(harness.schedule.filter((item) => item.ms === 5000).length, 0, '旧 release 不得安排关流')
+
+  await releaseSecond()
+  const close = harness.schedule.find((item) => item.ms === 5000)
+  assert.ok(close)
+  close!.callback!()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.sessions[1]!.closeCalls, 1)
+})
+
+test('viewer 存活时 idle 暂停被否决：保持 running/不关流（issue #73）', async () => {
+  const harness = makeService()
+  const release = await harness.service.startStream({ video: () => {}, error: () => {} })
+  await assert.rejects(harness.lifecycle.hooks.pause!(), /viewer 正在观看/)
+  assert.equal(harness.sessions[0]!.closeCalls, 0, '否决 pause 时不得关流')
+  assert.equal(harness.adapter.pauseCalls, 0)
+
+  // viewer 离开 → 5s 宽限关流；之后 pause 正常执行
+  await release()
+  const closeTimer = harness.schedule.find((item) => item.ms === 5000)
+  assert.ok(closeTimer)
+  closeTimer!.callback!()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.sessions[0]!.closeCalls, 1)
+  await harness.lifecycle.hooks.pause!()
+  assert.equal(harness.adapter.pauseCalls, 1)
 })
