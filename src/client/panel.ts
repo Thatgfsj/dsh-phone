@@ -16,12 +16,16 @@ import { createPanelEmptyState } from './empty-state.ts'
 import { describePanelGate, loadPanelConfig } from './gate.ts'
 import type { PanelGate } from './gate.ts'
 import { createPhonePanelView } from './panel-view.ts'
+import { createFetchProvisionApi } from './provision-api.ts'
+import type { ProvisionApi } from './provision-api.ts'
 
 export interface PanelDeps {
   React: typeof ReactNamespace
   t: Translate
   /** Injectable config API for tests/embedding. */
   api?: ConfigApi
+  /** Injectable provisioning API for tests/embedding. */
+  provisionApi?: ProvisionApi
 }
 
 /** Build the panel body component for the current locale. */
@@ -30,7 +34,7 @@ export function createPhonePanel(deps: PanelDeps): ReactNamespace.ComponentType 
   const h = React.createElement
   const api = deps.api ?? createFetchConfigApi()
   const PhonePanelView = createPhonePanelView({ React, t, api })
-  const PanelEmptyState = createPanelEmptyState({ React, t })
+  const PanelEmptyState = createPanelEmptyState({ React, t, provisionApi: deps.provisionApi ?? createFetchProvisionApi() })
 
   function PhonePanel(): ReactNamespace.ReactElement {
     const [config, setConfig] = React.useState<PhoneConfigView>()
