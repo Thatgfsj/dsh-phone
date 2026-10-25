@@ -34,9 +34,9 @@ whenToUse: 用户要求在 Android 设备上操作应用、看手机画面、连
   4. 全失败 → 工具返回 `E_RUNTIME_UNAVAILABLE` + 平台安装指引（禁止静默失败）。
   - 首次使用守卫的 `onboarding.choice` 会**覆盖** `runtime`：accepted 且 choice 非空时等价显式运行时。
 - **生命周期**：`stopped → booting → running →（5min 无交互）paused →（30min）stopped`。懒启动：首次工具调用或首次打开面板才拉起。`attach` 永不被插件停止，只断连接。
-- **booting 中间态**：启动期间工具返回 `{ok:false, code:'E_BOOTING', bootMs, retryable:true}`，**不是失败**：等待后重试 `phone_status`，禁止中断任务。
+- **booting 中间态**：启动期间工具返回 `{ok:false, code:'E_BOOTING', bootMs, retryable:true}`，**不是失败**：等待后重试 `phone_status`（另有可选 `phase`：launching/waiting-adbd/connecting-adb/ready），禁止中断任务。
 - **双链路**：你的感知 = 按需单帧截图（`phone_screenshot`）；人的观察 = 右侧栏 scrcpy 视频流（仅面板可见时传输）。你**不是**视频流消费者，禁止依赖看视频完成任务。
-- **资源**：running 无人看约 1–3% CPU / ~2GB；有人看单核 30–50% / 2Mbps。`cpuPct/memPct` **当前未实现**，不要拿它们判断负载。
+- **资源**：running 无人看约 1–3% CPU / ~2GB；有人看单核 30–50% / 2Mbps。`cpuPct/memPct` 为**尽力而为**（取不到则缺省），不要拿它们做精确判断。
 
 ## 3. 工具清单（9 个，无 serial 参数）
 
@@ -269,7 +269,7 @@ cp -r /path/to/dsh-phone/skill/dsh-phone ~/.dsh/skills/dsh-phone
 2. **右侧栏扩展点**：实现注册右侧栏 **tab 类型**（`sidebarRightTabs` + `sidebar.right.pane.tab`），**不是** `rightbar`/`rightbar.session` slot（后者是 single slot，注册会遮蔽官方右栏）。对 Agent 无操作差异。
 3. **配置写入**：Agent 用插件的**本地 token HTTP 通道**（`/agent/config` 单键写入，含 `onboarding.*`）；不是文件级定点合并。
 4. **一句话的路径/端口探测由 Agent 的 shell 完成**，插件只提供 verify + 写入（不扫盘）。
-5. **`cpuPct/memPct` 未实现**：`phone_status` 不返回这两个字段，不要据此判断负载。
-6. **设置页没有 `enabled` 开关**：开关由插件管理/配置文件控制；不要引导用户去设置页找它。
+5. **`cpuPct/memPct` 为尽力而为**（#56）：可能缺省，不要据此做精确判断。
+6. **设置页只读展示 `enabled`**（#52/#39）：开关仍由插件管理/配置文件控制；不要引导用户去设置页找开关。
 7. **动态安装后 UI 需刷新页面**：HMR 不会向已打开页面注入新的客户端模块（DSH 宿主行为，不是插件缺陷）；
    工具可用但看不到入口时先刷新（F5），刷新不中断会话。

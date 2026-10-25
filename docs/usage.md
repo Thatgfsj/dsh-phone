@@ -223,7 +223,7 @@ curl -sS -X POST "$BASE/dsh-phone/api/agent/config" -H 'content-type: applicatio
 | running + 人在看 | 单核 30–50%（软编） | ~2GB | 2Mbps |
 | paused | ~0 | 保留 | 0 |
 
-- 首次使用提问时就要告知用户「运行中约 2GB 内存」；`cpuPct/memPct` **当前未实现**，不要据此判断负载。
+- 首次使用提问时就要告知用户「运行中约 2GB 内存」；`cpuPct/memPct` 为**尽力而为**（emulator/redroid/attach 各自采样，取不到则缺省），不要当精确监控。
 - 画面卡顿优先建议用户降低 `stream.maxSize/maxFps/bitrate` 或改用硬解浏览器；不要加重负载。
 
 ## 8. 已知行为差异（以实现为准）
@@ -232,7 +232,7 @@ curl -sS -X POST "$BASE/dsh-phone/api/agent/config" -H 'content-type: applicatio
 |---|---|
 | 无首次使用守卫 | 新增 `onboarding` 守卫：pending 时任何 `phone_*`（含 `phone_status`）返回 `E_ONBOARDING_REQUIRED`；用户明确同意后才可操作 |
 | 右侧栏用 rightbar slot | 注册右侧栏 **tab 类型**（`sidebarRightTabs` + `sidebar.right.pane.tab`），不注册 `rightbar`（会遮蔽官方右栏） |
-| 设置页可开关插件 | 设置页表单只含 volatile 字段（含 onboarding）；`enabled` 由插件管理/配置文件控制 |
+| 设置页可开关插件 | 设置页只读展示 `enabled`（#52/#39）；开关仍由插件管理/配置文件控制 |
 | Agent 用配置 set API 写 endpoint/resolved | 插件提供本地 token 通道 `POST /agent/config`（单键、R1/R4/R5），onboarding 也走同一通道 |
-| `phone_status` 返回 cpuPct/memPct | 未实现，字段缺省 |
+| `phone_status` 返回 cpuPct/memPct | 尽力而为（#56），字段可能缺省 |
 | 一句话解析（路径/端口探测）由插件完成 | 由操作 Agent 的 shell 完成；插件只做 verify + 写入 |

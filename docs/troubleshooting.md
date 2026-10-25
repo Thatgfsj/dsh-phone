@@ -87,7 +87,7 @@ node scripts/fetch-scrcpy-server.mjs --check    # jar 校验
 
 ## 7. 已知未实现 / 未验证
 
-- `cpuPct/memPct` 未实现，不要据此判断负载。
+- `cpuPct/memPct` 为尽力而为（取不到则缺省），不要据此做精确判断。
 - redroid（真实 Docker）、emulator（真实二进制/AVD）、attach（真实 adbd）、scrcpy 视频流、审批 UI、真实浏览器渲染：本机均**未端到端验证**，只有单测/静态验证。
 - 浏览器对 WebCodecs `avc.format='annexb'` + in-band SPS/PPS 的接受度未在真实页面验证；解码失败会自动回退软解。
 - 镜像下载 scrcpy-server 的可用性未逐个验证；优先官方 URL。
