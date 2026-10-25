@@ -5,33 +5,74 @@
 
 ## [Unreleased]
 
+## [v0.2.0] - 2026-10-25
+
+第二次发布：首次使用守卫（onboarding）、右侧栏入口与自动打开、冷启动健壮性，以及 emulator 方向的一批修复。
+用户要求「修完再发」，因此本版本包含 #36/#44/#56/#59 等修复后才发布。
+
 ### Added
 
-- **首次使用守卫**（[#30](https://github.com/Thatgfsj/dsh-phone/issues/30)）：新增 `onboarding.status`
-  （`pending`/`accepted`/`declined`，默认 `pending`）与 `onboarding.choice`（`""`/emulator/redroid/attach）
-  两个 volatile 配置；pending 时任何 `phone_*` 工具（含 `phone_status`）返回 `E_ONBOARDING_REQUIRED`
-  （不启动运行时、不安装软件、不写配置），declined 返回 `E_ONBOARDING_DECLINED`；accepted + choice
-  等价显式运行时，accepted 无 choice 沿用 `runtime`。
-- **设置页首次使用引导卡片**（[#31](https://github.com/Thatgfsj/dsh-phone/issues/31)）：展示三种接入方式、
-  安装命令与体积（emulator 约 1.7GB），用户选择后写 `onboarding.status/choice`；拒绝后可随时重新打开；
-  插件不代装任何软件。
-- **首次使用文档与 Agent 技能**（[#32](https://github.com/Thatgfsj/dsh-phone/issues/32)）：`docs/usage.md`
-  增加「首次使用」章节（三种方式命令与 Agent 提问流程）、`docs/config.md` 增加 onboarding 字段与语义、
-  `skill/dsh-phone/SKILL.md` 增加「收到 `E_ONBOARDING_REQUIRED` 先征求用户同意」的硬流程。
-- **会话头部手机入口与面板空态**（[#45](https://github.com/Thatgfsj/dsh-phone/issues/45)）：
-  `conversation.session.header.utilities` 增加手机图标按钮（任意会话可见，点击在右栏打开/聚焦手机 tab）；
-  `pending`/`declined`/Host 不可用时面板显示可读空态与内嵌引导卡，不黑屏；
-  `accepted` 时加载后 best-effort 自动打开（≤10s 静默重试）。
-- **pending 也自动打开面板**（[#47](https://github.com/Thatgfsj/dsh-phone/issues/47)）：自动打开条件改为
-  `onboarding.status !== 'declined'`；`pending` 时由面板内引导卡直接征询同意；`declined` 不自动打开
-  （会话头部按钮仍可手动打开）。
+- **首次使用守卫（onboarding）**（[#30](https://github.com/Thatgfsj/dsh-phone/issues/30)、
+  [#31](https://github.com/Thatgfsj/dsh-phone/issues/31)、[#32](https://github.com/Thatgfsj/dsh-phone/issues/32)）：
+  新增 `onboarding.status`（`pending`/`accepted`/`declined`，默认 `pending`）与 `onboarding.choice`
+  两个 volatile 配置；pending 时 9 个 `phone_*` 工具（含 `phone_status`）返回 `E_ONBOARDING_REQUIRED`
+  （不启动运行时、不安装软件、不写配置），declined 返回 `E_ONBOARDING_DECLINED`；设置页与面板内嵌
+  引导卡展示三种接入方式与安装命令；SKILL 增加「先向用户说明代价并取得明确答复」的硬流程。
+- **会话头部手机入口、自动打开与面板空态**（[#45](https://github.com/Thatgfsj/dsh-phone/issues/45)）：
+  `conversation.session.header.utilities` 增加手机图标按钮（任意会话可见）；面板在
+  `pending`/`declined`/Host 不可用时显示可读空态与内嵌引导卡，不黑屏。
+- **pending 也自动打开面板 + 首帧重试**（[#47](https://github.com/Thatgfsj/dsh-phone/issues/47)）：
+  自动打开条件改为 `onboarding.status !== 'declined'`；pending 时由面板首屏直接征询同意；
+  面板首帧读取增加短暂重试，避免 Host 冷启动时闪出错误/不可用。
+- **GET /config 暴露 `enabled` 只读字段**（[#52](https://github.com/Thatgfsj/dsh-phone/issues/52)）：
+  主 handler 与 `enabled=false` 的只读 handler 同形，设置页可只读展示插件开关状态。
+- **客户端 booting 进度与 enabled 展示**（[#39](https://github.com/Thatgfsj/dsh-phone/issues/39)）：
+  面板在 booting 时每秒轮询 `/status` 展示进度（`bootMs` + `phase`：launching/waiting-adbd/connecting-adb/ready）；
+  设置页只读展示 `enabled` 状态并据此禁用编辑。
+- **scrcpy-server 懒下载**（[#37](https://github.com/Thatgfsj/dsh-phone/issues/37)）：首次启动时自动下载并
+  sha256 校验（single-flight、超时、结构化错误），不再要求用户先手工跑脚本；仍支持
+  `DSH_PHONE_SCRCPY_SERVER` 覆盖。
+- **可复制安装命令单一数据源**（[#38](https://github.com/Thatgfsj/dsh-phone/issues/38)）：运行时不可用/
+  引导卡中的安装命令集中为单一数据源，文档与工具返回一致。
+
+### Fixed
+
+- **探测失败不再永久缓存**（[#36](https://github.com/Thatgfsj/dsh-phone/issues/36)）：运行时探测失败结果
+  30s 防抖后失效；配置变更/断连可触发重新探测，不再需要重启 DSH。
+- **冷启动 ADB/截图重试与 lastError 清理**（[#44](https://github.com/Thatgfsj/dsh-phone/issues/44)）：
+  冷启动窗口内 ADB 连接与 `screencap` 增加重试；成功后清理 `lastError`，避免残留旧错误。
+- **runtime emulator 健壮性**（[#56](https://github.com/Thatgfsj/dsh-phone/issues/56)）：`avdmanager` 多路径
+  查找、AVD 名前缀匹配、空闲端口选择、cpu/mem 采样（Linux `/proc` / redroid `docker stats` /
+  attach `dumpsys`，取不到省略）与 booting `phase` 阶段。
+- **Host → stream 接线修复**（[#59](https://github.com/Thatgfsj/dsh-phone/issues/59)）：视频流/控制通道传
+  `AdbConnection` 而非 `.raw`，修复真实链路下 scrcpy 启动的接线错误。
 
 ### Changed
 
-- **动态安装后需刷新页面**（[#48](https://github.com/Thatgfsj/dsh-phone/issues/48)）：
-  `docs/install.md` / README / `docs/client.md` / `skill/dsh-phone/SKILL.md` 补充说明——客户端模块在页面启动时
-  入图，HMR 不会向已打开页面注入新模块；安装/更新/启用后需刷新页面（F5），刷新不中断会话与手机实例；
-  SKILL 增加「工具可用但看不到手机入口」的三步排查。
+- **动态安装后需刷新页面**（[#48](https://github.com/Thatgfsj/dsh-phone/issues/48)）：安装/更新/启用插件后
+  必须刷新浏览器页面（F5）——客户端模块在页面启动时入图，HMR 不会向已打开页面注入新模块；
+  刷新不中断会话与手机实例。文档与 SKILL 增加「工具可用但看不到手机入口」的三步排查。
+- **真实 emulator attach 验收已通过**（[#40](https://github.com/Thatgfsj/dsh-phone/issues/40)、
+  [#58](https://github.com/Thatgfsj/dsh-phone/issues/58)）：真实 emulator（720x1280）attach 全链路 PASS——
+  Host WS 10s 收 **102 帧**（config/keyframe/delta，DPH1 合法）、stream 层直连对照 51 帧/5s、
+  控制通道/中文输入（INJECT_TEXT）/截图（PNG 720x1280、775ms）均 PASS；见
+  [docs/verification.md](docs/verification.md) §2 行 10–12 与 §7。emulator 自启（B 分支）与真实浏览器渲染仍待人工。
+- 版本号 `0.1.0` → `0.2.0`（[#51](https://github.com/Thatgfsj/dsh-phone/issues/51)）。
+
+### 已知限制与未验证项
+
+- **#40 部分完成**：真实 emulator attach 与 scrcpy 实连已通过（#58，见 §7）；仍待人工/环境的项：
+  emulator 自启（B 分支，需停用用户 live 实例）、真实浏览器渲染/WebCodecs/TinyH264、redroid（本机无 Docker）、
+  `phone_shell` 审批 UI 点击；完整矩阵、SKIP 原因与人工待办见 [docs/verification.md](docs/verification.md) §2/§4/§5。
+- **平台限制**：Windows/macOS 的 emulator 参数、WSL2 + redroid 属未本机验证路径；redroid 需 Docker + binder。
+- **单实例**：`limits.maxInstances: 1`，所有工具无 serial 参数。
+- **cpuPct/memPct 为尽力而为**：emulator/redroid/attach 各自采样，取不到就省略字段，不阻断 status；
+  不要把它们当精确监控。
+- **`phone_screenshot` 未探测模型图片能力**：仅捕获 attachment 保存失败并降级文本。
+- **一句话的候选路径/端口探测由操作 Agent 完成**：插件不扫盘，只提供 `/attach/verify` 与单键写入。
+- **scrcpy-server jar 不随包分发**：懒下载失败时仍可用 `DSH_PHONE_SCRCPY_SERVER` 或
+  `node scripts/fetch-scrcpy-server.mjs` 手动放置。
+- **设置页 `enabled` 只读**：开关变更仍需插件管理/profile 配置（非 volatile，改动需重载）。
 
 ## [v0.1.0] - 2026-10-25
 

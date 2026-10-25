@@ -3,13 +3,13 @@
 > 肥鱼的手机：给 DeepSeek Harness（DSH）提供一台运行在后端、经浏览器右侧栏呈现的 Android 实例，并注册 9 个 `phone_*` 工具供 Agent 直接操作。
 
 [![DSH](https://img.shields.io/badge/DSH-0.2.1--rc.2-blue)](https://github.com/deepseek-ai/deepseek-harness)
-[![version](https://img.shields.io/badge/version-v0.1.0-blueviolet)](#版本与状态)
+[![version](https://img.shields.io/badge/version-v0.2.0-blueviolet)](#版本与状态)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![files ≤1000 lines](https://img.shields.io/badge/file-%E2%89%A41000%20lines-brightgreen)](CONTRIBUTING.md)
 
 ## 版本与状态
 
-**v0.1.0（已发布）**：三运行时、9 个工具、scrcpy 视频流、右侧栏面板与设置页均已实现并合并。发布说明见 [CHANGELOG.md](CHANGELOG.md#v010---2026-10-25)。
+**v0.2.0（已发布）**：三运行时、9 个工具、scrcpy 视频流、右侧栏面板与设置页；本版新增**首次使用守卫**（onboarding）、会话头部入口/自动打开、booting 进度，并修复冷启动与 emulator 健壮性问题。发布说明见 [CHANGELOG.md](CHANGELOG.md#v020---2026-10-25)，验收状态见 [docs/verification.md](docs/verification.md)。
 
 - 需求原文：[docs/SPEC.md](docs/SPEC.md)（**禁止改写**）。实现与需求的差异、未验证项见 [docs/host.md](docs/host.md)、[docs/runtime.md](docs/runtime.md)、[docs/stream.md](docs/stream.md)、[docs/client.md](docs/client.md)。
 - 集成点校准（DSH 0.2.1-rc.2 本机源码证据）：[docs/calibration.md](docs/calibration.md)；架构与协议契约：[docs/architecture.md](docs/architecture.md)、[docs/protocol.md](docs/protocol.md)。
@@ -18,9 +18,9 @@
 
 - **9 个 `phone_*` 工具**：`phone_status` / `phone_screenshot` / `phone_tap` / `phone_swipe` / `phone_key` / `phone_input_text` / `phone_app_launch` / `phone_uiautomator_dump` / `phone_shell`。工具出现在 Agent 工具列表 = 插件开关已打开。
 - **三种运行时 + auto 探测**：redroid（Docker 容器）/ Android SDK Emulator（KVM / WHPX / HVF，headless AVD）/ attach（连接用户自己的模拟器或真机）。
-- **懒启动与分级休眠**：首次工具调用或首次打开面板才拉起实例；5 分钟无交互 → `paused`，30 分钟或资源紧张 → `stopped`。`attach` 永不被插件停止。
+- **懒启动与分级休眠**：首次工具调用或首次打开面板才拉起实例；5 分钟无交互 → `paused`，30 分钟或资源紧张 → `stopped`。`attach` 永不被插件停止。booting 时 `phone_status` 返回 `bootMs` 与 `phase`（launching/waiting-adbd/connecting-adb/ready），面板展示启动进度。
 - **双链路解耦**：Agent 只看按需单帧截图（约 100–300ms、零持续开销）；人看 scrcpy H.264 视频流（默认 720p / 15fps / 2Mbps，仅面板可见时传输）。Host 零转码；浏览器 WebCodecs 硬解，TinyH264 WASM 软解兜底。
-- **右侧栏面板与设置页**：面板是右侧栏的一个 tab（不遮蔽官方右栏）；设置页维护「一句话」、显示解析状态、提供重置入口与「打开手机面板」按钮。
+- **右侧栏面板与设置页**：面板是右侧栏的一个 tab（不遮蔽官方右栏），可从**会话头部手机按钮**或设置页打开；加载后 best-effort 自动打开（pending 时由面板首屏直接征询同意）。设置页维护「一句话」、显示解析状态/`enabled` 只读状态、提供重置入口与「打开手机面板」按钮。
 - **首次接入「一句话」**：用户填一句话（如「用的雷电模拟器，装在默认位置」），操作 Agent 用本地 token 通道完成探测、连通验证与**定点**配置写入。
 
 ## 平台与前置条件
@@ -38,7 +38,7 @@
 
 ## 安装
 
-**v0.1.0 已可用。** 要求：DSH `>=0.2.1-rc.2 <0.3.0`、Node `>=20`；宿主浏览器需支持 WebCodecs（Chrome / Edge 等），不支持时自动回退 TinyH264 软解。源码安装见下，tarball 安装见 [docs/install.md](docs/install.md) §2。
+**v0.2.0 已可用。** 要求：DSH `>=0.2.1-rc.2 <0.3.0`、Node `>=20`；宿主浏览器需支持 WebCodecs（Chrome / Edge 等），不支持时自动回退 TinyH264 软解。源码安装见下，tarball 安装见 [docs/install.md](docs/install.md) §2。**安装/更新/启用插件后需重启 DSH 并刷新浏览器页面（F5）**，原因与排查见 [docs/install.md](docs/install.md) §1.1。
 
 ```sh
 git clone https://github.com/Thatgfsj/dsh-phone.git
@@ -85,7 +85,7 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 
 | 工具 | 参数 | 说明 |
 |---|---|---|
-| `phone_status` | — | 任何任务第一步；返回 state/runtime/platform/bootMs/endpoint 等（`cpuPct/memPct` 当前未实现） |
+| `phone_status` | — | 任何任务第一步；返回 state/runtime/platform/bootMs/phase/endpoint 等（`cpuPct/memPct` 尽力而为，可能缺省） |
 | `phone_screenshot` | — | 单帧截图，图片内容块；附件不可用时降级文本 |
 | `phone_tap` | `x, y` | 坐标必须来自最近一次截图或控件树 |
 | `phone_swipe` | `x1, y1, x2, y2, durationMs` | 滚动、解锁、切页 |
@@ -194,11 +194,11 @@ npm pack --dry-run
 
 - **首版单实例**（`maxInstances: 1`）：工具无 serial 参数，不支持多设备。
 - **安装/更新/启用后需刷新页面**：DSH 不会把动态新增的客户端模块热注入已打开页面（HMR 只更新已加载模块）；工具可用但看不到手机入口时先刷新（F5），刷新不中断会话/手机实例。
-- **未在本机端到端验证**：本机无 Docker、无 emulator 包/AVD、attach 端口不可达。redroid、emulator、真机 attach、scrcpy 视频流、审批 UI、真实浏览器渲染均只有单测/静态验证；详见 [docs/runtime.md](docs/runtime.md) §6、[docs/stream.md](docs/stream.md) §8、[docs/client.md](docs/client.md) §6。
-- **`cpuPct/memPct` 未实现**：`phone_status` 中这两个字段当前始终缺省。
+- **#40 部分完成**：真实 emulator attach 与 scrcpy 实连已通过（#58：Host WS 102 帧/10s、控制通道/中文输入/截图 PASS）；仍待人工/环境的项：emulator 自启（B 分支）、真实浏览器渲染/WebCodecs/TinyH264、redroid（本机无 Docker）、审批 UI 点击。详见 [docs/verification.md](docs/verification.md) §2/§7 与 §4/§5 待办。
+- **`cpuPct/memPct` 为尽力而为**：emulator/redroid/attach 各自采样（emulator `/proc`、redroid `docker stats`、attach `dumpsys`），取不到就省略字段，不阻断 status；不要当精确监控。
 - **`phone_screenshot` 的模型图片能力**：仅捕获 `attachments.saveImage` 失败并降级文本，未探测模型路由是否接受图片。
 - **一句话的候选路径/端口探测由操作 Agent 完成**：插件不扫盘，只提供 `/attach/verify` 与单键写入。
-- **`enabled` 开关不在设置页表单里**：它非 volatile；关闭插件请用「插件管理」禁用该行，或在 profile 配置中改 `enabled: false` 后重载（见 [docs/config.md](docs/config.md)）。
+- **设置页 `enabled` 只读**：设置页展示开关状态但不可编辑（非 volatile）；关闭插件请用「插件管理」禁用该行，或在 profile 配置中改 `enabled: false` 后重载（见 [docs/config.md](docs/config.md)）。
 - **scrcpy-server jar 不随包分发**：需运行 `node scripts/fetch-scrcpy-server.mjs`（或设 `DSH_PHONE_SCRCPY_SERVER` 指向已有 jar）。离线/镜像可用性见 [docs/install.md](docs/install.md)。
 - Windows WSL2 + redroid 属进阶路径；Windows/macOS 的 emulator 参数未在本机验证。
 

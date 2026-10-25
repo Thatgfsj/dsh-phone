@@ -256,8 +256,9 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
    不暴露 handle。strea 层仍负责 scrcpy 生命周期/封帧/WS。若未来需要多 viewer 共享，
    可改为 stream `StreamSession` + 暴露 controller 的工厂。
 4. **POST /config 的成功体**严格是 protocol 的 config snapshot；R4b 失败用错误体而不是附加字段。
-5. **`cpuPct/memPct` 未实现**：`PhoneStatus` 中为可选字段，当前始终缺省（无可靠的宿主侧采样
-   实现；SPEC §3.7 仅作为参考预算）。标为未实现，不是未验证。
+5. **`cpuPct/memPct` 为尽力而为**（#56/#44）：`PhoneStatus` 中为可选字段；emulator 读 `/proc`、
+   redroid 用 `docker stats`、attach 用 `dumpsys`（service 层缓存），取不到就省略，不阻断 status。
+   SPEC §3.7 仅作为参考预算，不要当精确监控。
 6. **phone_screenshot 的模型图片能力**：只捕获 `attachments.saveImage` 的失败并降级文本，
    未复刻官方 `assertImageCapableRoute`（无法从插件侧访问该内部函数）——见 §7 未验证项。
 

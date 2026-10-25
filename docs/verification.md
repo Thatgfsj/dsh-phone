@@ -4,6 +4,12 @@
 > 一条命令：\`npm run verify\`（内部串行执行 5 组检查，任一失败整体退出码非 0）。
 > 真实设备链路另由 env-gated 脚本 scripts/verify/verify-emulator.mjs 覆盖（DSH_PHONE_E2E=1 才跑；默认 SKIP 不碰设备）。
 > 未测项一律显式 SKIP 并写明原因，**不允许假绿**；"人工待办"不是已通过。
+>
+> **v0.2.0（2026-10-25）发布状态**：#40 真实环境验收**部分完成**——#58 已实测真实 emulator attach 全链路
+> **PASS**（§2 行 10–12 与 §7：Host WS 10s 收 **102 帧**、stream 层直连 5s 收 51 帧、keyframe/控制通道/
+> 中文输入/截图全 PASS）；剩余 SKIP/人工待办：emulator 自启（B 分支，需停用用户 live 实例）、
+> 真实浏览器渲染/WebCodecs/TinyH264、redroid（本机无 Docker）。#56 的 cpu/mem 采样与 booting `phase`
+> 仍为单测/假环境验证。
 
 ## 1. 一条命令跑什么
 

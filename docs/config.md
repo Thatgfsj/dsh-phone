@@ -124,7 +124,7 @@ R5 验证通过后，用 `POST /dsh-phone/api/agent/config` 单键写 `attach.en
 
 ### 3.5 关闭插件（`enabled: false`）
 
-- 设置页表单只展示 volatile 字段，**没有 `enabled` 开关**（与 SPEC §2 的描述存在差异，见下）。
+- 设置页表单只展示 volatile 字段；`enabled` 为**只读展示**（#52/#39），没有可编辑开关（与 SPEC §2 的描述存在差异，见下）。
 - 推荐用 DSH「插件管理」禁用 `dsh-phone` 行（Loader `disabled`），等效于不加载插件；
 - 或在 profile patch 中把该行 `config.enabled` 设为 `false` 并重载（同样注意 patch 整体替换）。
 - 关闭后：不注册 9 个工具与视频流；`GET /dsh-phone/api/config` 仍只读可用；已写入的 `attach.*` / `onboarding.*` 保留，重新开启后按原状态继续。
@@ -154,7 +154,7 @@ R5 验证通过后，用 `POST /dsh-phone/api/agent/config` 单键写 `attach.en
 
 1. **新增首次使用守卫**（SPEC 未描述）：`onboarding.status/choice` 两个 volatile 键；pending 时工具一律返回
    `E_ONBOARDING_REQUIRED`，用户明确同意后才允许操作（issue #30）。
-2. **设置页没有 `enabled` 开关**：Schemastery 设置表单只展示 volatile 字段；开关请用插件管理或 profile 配置（见 §3.5）。
+2. **设置页只读展示 `enabled`**（#52/#39）：设置表单仍只展示 volatile 字段；开关请用插件管理或 profile 配置（见 §3.5）。
 3. **一句话候选路径/端口探测由操作 Agent 的 shell 完成**，插件只提供 `/attach/verify` 与单键写入（见 [host.md](host.md) §6）。
-4. **`cpuPct/memPct` 未实现**：`PhoneStatus` 中为可选字段，当前始终缺省。
+4. **`cpuPct/memPct` 为尽力而为**（#56）：`PhoneStatus` 中为可选字段，emulator/redroid/attach 各自采样，取不到就缺省。
 5. **Agent 通道不提供 `GET /config`**：读取 `userHint` 用 `dsh --profile <p> --dump-config`（只读）；onboarding 状态从工具错误体读取。
