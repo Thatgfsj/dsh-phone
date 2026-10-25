@@ -14,6 +14,9 @@ export type RuntimeKind = 'redroid' | 'emulator' | 'attach'
 export type RuntimeSetting = 'auto' | RuntimeKind
 export type PhoneState = 'stopped' | 'booting' | 'running' | 'paused'
 
+/** booting 进度阶段（issue #56）：供 /status 与客户端进度层展示，向后兼容（可选）。 */
+export type BootPhase = 'launching' | 'waiting-adbd' | 'connecting-adb' | 'ready'
+
 export interface RuntimeProbe {
   ok: boolean
   reason?: string
@@ -28,12 +31,27 @@ export interface RuntimeStatus {
   since?: number
   pid?: number
   containerId?: string
+  /** 尽力而为的 CPU/内存占用（取不到则省略，issue #56）。 */
+  cpuPct?: number
+  memPct?: number
+}
+
+/** 进程/设备资源占用采样（尽力而为，字段可缺省）。 */
+export interface ProcessUsage {
+  cpuPct?: number
+  memPct?: number
 }
 
 export interface RuntimeAdapter {
   readonly kind: RuntimeKind
   probe(): Promise<RuntimeProbe>
-  ensureRunning(onProgress?: (message: string) => void): Promise<Endpoint>
+  /**
+   * 启动实例。onProgress 的第二个参数是 boot 阶段（issue #56）：
+   * 服务层据此在 /status 的 booting 状态里给出 phase，客户端展示进度层。
+   */
+  ensureRunning(
+    onProgress?: (message: string, phase?: BootPhase) => void,
+  ): Promise<Endpoint>
   pause(): Promise<void>
   resume(): Promise<void>
   stop(): Promise<void>
@@ -152,6 +170,18 @@ export interface RuntimeEnvironment {
   /** Linux: /dev/kvm；Windows: WHPX；macOS: Hypervisor.framework。 */
   acceleration(platform: Platform, emulatorPath?: string): Promise<RuntimeProbe>
   waitForPort(endpoint: Endpoint, options: WaitForPortOptions): Promise<boolean>
+  /** 端口是否已被占用（只做一次短探测，用于选择空闲 console 端口）。 */
+  isPortBusy(port: number, timeoutMs?: number): Promise<boolean>
+  /**
+   * 探测 avdmanager（issue #56）：cmdline-tools/{latest,各版本}/bin → SDK 根 tools/bin
+   * → ANDROID_HOME/ANDROID_SDK_ROOT → PATH。取不到返回 undefined。
+   */
+  findAvdManager(emulatorPath?: string): Promise<string | undefined>
+  /**
+   * 采样宿主进程 CPU/内存占用（issue #56，仅 Linux /proc；取不到返回 {}）。
+   * CPU% 需要两次采样，首次调用通常只返回 memPct。
+   */
+  sampleProcessUsage(pid: number): Promise<ProcessUsage>
 }
 
 export interface RuntimeDeps {

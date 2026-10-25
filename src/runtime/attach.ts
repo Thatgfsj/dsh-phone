@@ -12,6 +12,7 @@ import { formatEndpoint, parseEndpoint } from './types.ts'
 import { RuntimeError } from './types.ts'
 import type {
   AttachOptions,
+  BootPhase,
   Endpoint,
   RuntimeAdapter,
   RuntimeEnvironment,
@@ -76,7 +77,9 @@ export class AttachRuntime implements RuntimeAdapter {
   }
 
   /** 只连接校验，不启动任何外部进程。 */
-  async ensureRunning(onProgress?: (message: string) => void): Promise<Endpoint> {
+  async ensureRunning(
+    onProgress?: (message: string, phase?: BootPhase) => void,
+  ): Promise<Endpoint> {
     const endpoint = this.#endpoint
     if (!endpoint) {
       throw new RuntimeError(
@@ -87,7 +90,7 @@ export class AttachRuntime implements RuntimeAdapter {
       )
     }
 
-    onProgress?.(`校验 attach 端点 ${formatEndpoint(endpoint)}…`)
+    onProgress?.(`校验 attach 端点 ${formatEndpoint(endpoint)}…`, 'waiting-adbd')
     const open = await this.#env.waitForPort(endpoint, {
       timeoutMs: this.#readyTimeoutMs,
       intervalMs: 250,
@@ -101,7 +104,7 @@ export class AttachRuntime implements RuntimeAdapter {
 
     this.#reachable = true
     this.#since ??= Date.now()
-    onProgress?.(`attach 端点 ${formatEndpoint(endpoint)} 可连接`)
+    onProgress?.(`attach 端点 ${formatEndpoint(endpoint)} 可连接`, 'ready')
     return endpoint
   }
 

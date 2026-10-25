@@ -12,7 +12,14 @@
  */
 import { AdbError } from '../adb/types.ts'
 import type { OnboardingChoice, OnboardingStatus } from '../config/onboarding.ts'
-import type { Endpoint, PhoneState, RuntimeAdapter, RuntimeKind } from '../runtime/types.ts'
+import type {
+  BootPhase,
+  Endpoint,
+  PhoneState,
+  ProcessUsage,
+  RuntimeAdapter,
+  RuntimeKind,
+} from '../runtime/types.ts'
 import {
   DEFAULT_BOOT_TIMEOUT_MS,
   bootRetryDelays,
@@ -26,6 +33,11 @@ import type {
   Platform,
   VerifyResult,
 } from './contracts.ts'
+import {
+  ATTACH_CPU_COMMAND,
+  ATTACH_MEM_COMMAND,
+  usageFromAttachOutputs,
+} from './usage.ts'
 
 export interface ServiceConfig {
   /** 生效运行时（已叠加 onboarding.choice；wiring.readServiceConfig）。 */
@@ -133,6 +145,8 @@ export interface PhoneServiceDeps {
 }
 
 const DEFAULT_STREAM_GRACE_MS = 5_000
+/** attach 资源占用采样缓存（issue #56，避免 /status 轮询频繁 shell）。 */
+const USAGE_CACHE_MS = 5_000
 /**
  * boot 重试预算（issue #44）：给每次 connect 自身（最长 8s）留出余量，
  * 保证“延迟累计 + 最后一次尝试”不会先撞上 lifecycle 的 120s boot 超时。
@@ -183,7 +197,13 @@ export class PhoneService implements PhoneOperations {
   #closeTimer: (() => void) | undefined
   #ensurePromise: Promise<void> | undefined
   #queue: Promise<unknown> = Promise.resolve()
+  #serialPending = 0
   #disposed = false
+  /** booting 进度阶段（issue #56）。 */
+  #bootPhase: BootPhase | undefined
+  /** attach 资源占用采样缓存（issue #56）。 */
+  #usage: ProcessUsage | undefined
+  #usageAt = 0
 
   constructor(deps: PhoneServiceDeps) {
     this.#deps = deps
@@ -231,6 +251,13 @@ export class PhoneService implements PhoneOperations {
     }
     if (endpoint) status.endpoint = endpoint
     if (lifecycle.bootMs !== undefined) status.bootMs = lifecycle.bootMs
+    // issue #56：booting 时给出进度阶段（可选字段，客户端可忽略）
+    if (lifecycle.state === 'booting' && this.#bootPhase !== undefined) {
+      status.phase = this.#bootPhase
+    }
+    const usage = await this.#measureUsage(handle.detection.kind, runtimeStatus)
+    if (usage.cpuPct !== undefined) status.cpuPct = usage.cpuPct
+    if (usage.memPct !== undefined) status.memPct = usage.memPct
     // issue #44：running 后不再展示历史启动/探测错误，避免误导；仅保留当前状态相关错误
     const lastError =
       lifecycle.state === 'running'
@@ -407,12 +434,16 @@ export class PhoneService implements PhoneOperations {
 
   async #start(): Promise<void> {
     const handle = await this.#runtime()
-    const endpoint = await handle.adapter.ensureRunning()
+    this.#bootPhase = 'launching'
+    const endpoint = await handle.adapter.ensureRunning((_message, phase) => {
+      if (phase) this.#bootPhase = phase
+    })
     await this.#connectDuringBoot(endpoint)
   }
 
   async #resume(): Promise<void> {
     const handle = await this.#runtime()
+    this.#bootPhase = 'launching'
     await handle.adapter.resume()
     const status = await handle.adapter.status()
     const endpoint = status.endpoint ?? parseEndpoint(this.#deps.config().attach.endpoint)
@@ -436,6 +467,7 @@ export class PhoneService implements PhoneOperations {
 
   #onLifecycleError(error: Error, phase: string): void {
     if (phase === 'start' || phase === 'resume') {
+      this.#bootPhase = undefined
       // 启动/唤醒失败：adapter 可能已不可用，丢弃 handle 让下一次调用重新探测；
       // 探测本身失败的错误由 #runtime 缓存（30s 防抖），这里不再覆盖。
       this.#dropHandle()
@@ -452,6 +484,7 @@ export class PhoneService implements PhoneOperations {
    * 按 500ms→1s→2s→4s→8s 退避重试，直到成功或 boot 预算耗尽。
    */
   async #connectDuringBoot(endpoint: Endpoint): Promise<void> {
+    this.#bootPhase = 'connecting-adb'
     const delays = this.#deps.bootRetryDelays?.() ?? bootRetryDelays(BOOT_RETRY_BUDGET_MS)
     let lastError: Error | undefined
     for (let attempt = 0; ; attempt += 1) {
@@ -459,6 +492,7 @@ export class PhoneService implements PhoneOperations {
         await this.#attachAdb(endpoint)
         this.#handleError = undefined
         this.#handleErrorAt = 0
+        this.#bootPhase = 'ready'
         return
       } catch (error) {
         lastError = toError(error)
@@ -493,6 +527,8 @@ export class PhoneService implements PhoneOperations {
 
   async #attachAdb(endpoint: Endpoint): Promise<void> {
     await this.#disconnectAdb()
+    this.#usage = undefined
+    this.#usageAt = 0
     const connection = await this.#deps.connect(endpoint)
     this.#connection = connection
     this.#device = this.#deps.createDevice(connection)
@@ -640,12 +676,15 @@ export class PhoneService implements PhoneOperations {
   /* ---------------------------------- 内部工具 ---------------------------------- */
 
   #serial<T>(work: () => Promise<T>): Promise<T> {
+    this.#serialPending += 1
     const next = this.#queue.then(work, work)
     this.#queue = next.then(
       () => undefined,
       () => undefined,
     )
-    return next
+    return next.finally(() => {
+      this.#serialPending -= 1
+    })
   }
 
   /**
@@ -670,6 +709,9 @@ export class PhoneService implements PhoneOperations {
       platform: handle?.detection.platform ?? this.#platform,
     }
     if (lifecycle.bootMs !== undefined) status.bootMs = lifecycle.bootMs
+    if (lifecycle.state === 'booting' && this.#bootPhase !== undefined) {
+      status.phase = this.#bootPhase
+    }
     if (lifecycle.lastError) status.lastError = lifecycle.lastError
     for (const listener of this.#listeners) {
       try {
@@ -677,6 +719,47 @@ export class PhoneService implements PhoneOperations {
       } catch {
         // 订阅者异常不影响服务
       }
+    }
+  }
+
+  /**
+   * 资源占用（issue #56，尽力而为）：优先用 runtime 适配器给的采样
+   * （redroid docker stats / emulator /proc），attach 用设备 shell 采样并缓存 5s；
+   * 取不到就省略字段，不影响 status。
+   */
+  async #measureUsage(
+    kind: RuntimeKind,
+    runtimeStatus: { cpuPct?: number; memPct?: number } | undefined,
+  ): Promise<ProcessUsage> {
+    const fromRuntime: ProcessUsage = {}
+    if (runtimeStatus?.cpuPct !== undefined) fromRuntime.cpuPct = runtimeStatus.cpuPct
+    if (runtimeStatus?.memPct !== undefined) fromRuntime.memPct = runtimeStatus.memPct
+    if (fromRuntime.cpuPct !== undefined || fromRuntime.memPct !== undefined) {
+      return fromRuntime
+    }
+    if (this.#lifecycle.state !== 'running') return {}
+    if (kind !== 'attach' || !this.#device || this.#serialPending > 0) return {}
+    const now = this.#now()
+    if (this.#usageAt !== 0 && now - this.#usageAt < USAGE_CACHE_MS) {
+      return this.#usage ?? {}
+    }
+    const usage = await this.#sampleAttachUsage()
+    this.#usage = usage
+    this.#usageAt = now
+    return usage
+  }
+
+  async #sampleAttachUsage(): Promise<ProcessUsage> {
+    const device = this.#device
+    if (!device) return {}
+    try {
+      const [cpuText, memText] = await Promise.all([
+        device.shell(ATTACH_CPU_COMMAND),
+        device.shell(ATTACH_MEM_COMMAND),
+      ])
+      return usageFromAttachOutputs(cpuText, memText)
+    } catch {
+      return {}
     }
   }
 
