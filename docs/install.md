@@ -1,6 +1,6 @@
 # 安装、升级与卸载
 
-> 适用于 dsh-phone v0.2.0（已发布）。DSH 版本要求：`>=0.2.1-rc.2 <0.3.0`；Node `>=20`。
+> 适用于 dsh-phone v0.2.1（已发布）。DSH 版本要求：`>=0.2.1-rc.2 <0.3.0`；Node `>=20`。
 > 安装类问题先看 [troubleshooting.md](troubleshooting.md)。
 
 ## 0. 前置条件
@@ -69,8 +69,8 @@ DSH 的客户端模块（`lib/client.js`）在**页面启动时**被组合进 `w
 ## 2. 从 tarball 安装（发布后）
 
 ```sh
-npm pack                # -> dsh-phone-0.2.0.tgz（prepack 会执行 build）
-dsh plugin --profile web add ./dsh-phone-0.2.0.tgz
+npm pack                # -> dsh-phone-0.2.1.tgz（prepack 会执行 build）
+dsh plugin --profile web add ./dsh-phone-0.2.1.tgz
 ```
 
 安装后同样**重启 DSH 并刷新页面**（原因见 §1.1）。
@@ -131,7 +131,7 @@ npm run build
 
 - Host 模块与客户端 bundle 都需要**重启 DSH** 才会换新；重启后还要**刷新已打开的页面**（客户端模块在页面启动时入图；只重启不刷新旧页面仍看不到新 UI）。
 - 升级后插件会重新生成 Agent token（旧 token 立即失效）；若改过 `docs/`/配置字段，重新看 [config.md](config.md)。
-- tarball 安装：`dsh plugin --profile web add ./dsh-phone-0.2.0.tgz` 覆盖安装即可。
+- tarball 安装：`dsh plugin --profile web add ./dsh-phone-0.2.1.tgz` 覆盖安装即可。
 
 ## 6. 卸载
 

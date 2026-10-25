@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+## [v0.2.1] - 2026-10-25
+
+补丁版：重做手机面板前端布局，修复长文本被挤成竖排单字、booting 黑屏与 header/footer 拥挤（#62）。
+
+### Fixed
+
+- **手机面板前端布局重做**（[#62](https://github.com/Thatgfsj/dsh-phone/issues/62)）：面板拆分为
+  `panel-header` / `panel-stage` / `panel-footer` 三个组件，新增 `layout.ts` 纯函数提供宽度断点
+  （≤360 compact / <600 regular / ≥600 wide）、stage overlay 判定（error > booting > canvas）与 booting 摘要；
+  窄屏使用 `container-type: inline-size` + `@container (max-width: 360px)` 收起 footer 文字标签；
+  长文本/endpoint/错误 message 统一按行换行（**不再竖排单字**）；booting 由 stage 层进度 overlay 呈现
+  （spinner + phase + 已等待/预计时间，**不再黑屏**）；header 状态徽章与 footer 5 个设备按键紧凑排列，
+  320px 下不溢出、无横向滚动条。单测覆盖断点/overlay 优先级/booting 摘要。
+
 ## [v0.2.0] - 2026-10-25
 
 第二次发布：首次使用守卫（onboarding）、右侧栏入口与自动打开、冷启动健壮性，以及 emulator 方向的一批修复。
