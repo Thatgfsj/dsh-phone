@@ -13,9 +13,11 @@ import { DEFAULT_REDROID_BOOT_TIMEOUT_MS, DEFAULT_RUNTIME_OPTIONS } from './type
 import { RuntimeError } from './types.ts'
 import { DEFAULT_ADB_HOST, DEFAULT_ADB_PORT, formatEndpoint } from './types.ts'
 import type {
+  BootPhase,
   CommandResult,
   CommandRunner,
   Endpoint,
+  ProcessUsage,
   RedroidOptions,
   RuntimeAdapter,
   RuntimeDeps,
@@ -37,6 +39,8 @@ interface ContainerInfo {
   id: string
 }
 
+const USAGE_CACHE_MS = 5_000
+
 export class RedroidRuntime implements RuntimeAdapter {
   readonly kind = 'redroid' as const
   readonly #options: RedroidOptions
@@ -46,6 +50,8 @@ export class RedroidRuntime implements RuntimeAdapter {
   readonly #endpoint: Endpoint
   #since: number | undefined
   #containerId: string | undefined
+  #usage: ProcessUsage = {}
+  #usageAt = 0
 
   constructor(options: RedroidRuntimeOptions) {
     this.#options = options.redroid
@@ -83,19 +89,21 @@ export class RedroidRuntime implements RuntimeAdapter {
     return { ok: true, detail: `镜像 ${this.#options.image}` }
   }
 
-  async ensureRunning(onProgress?: (message: string) => void): Promise<Endpoint> {
+  async ensureRunning(
+    onProgress?: (message: string, phase?: BootPhase) => void,
+  ): Promise<Endpoint> {
     const info = await this.#inspect()
     if (!info) {
-      onProgress?.(`创建 redroid 容器（${this.#options.image}）…`)
+      onProgress?.(`创建 redroid 容器（${this.#options.image}）…`, 'launching')
       await this.#create()
     } else if (info.status === 'paused') {
-      onProgress?.('unpause redroid 容器 …')
+      onProgress?.('unpause redroid 容器 …', 'launching')
       await this.#docker(['unpause', this.#name])
     } else if (info.status !== 'running') {
-      onProgress?.(`启动已存在的 redroid 容器（当前 ${info.status}）…`)
+      onProgress?.(`启动已存在的 redroid 容器（当前 ${info.status}）…`, 'launching')
       await this.#docker(['start', this.#name])
     } else {
-      onProgress?.('redroid 容器已在运行')
+      onProgress?.('redroid 容器已在运行', 'launching')
     }
 
     const ready = await this.#waitReady(onProgress)
@@ -106,6 +114,7 @@ export class RedroidRuntime implements RuntimeAdapter {
       )
     }
     this.#since ??= Date.now()
+    onProgress?.(formatEndpoint(this.#endpoint) + ' 已就绪', 'ready')
     return this.#endpoint
   }
 
@@ -149,7 +158,7 @@ export class RedroidRuntime implements RuntimeAdapter {
   async status(): Promise<RuntimeStatus> {
     const info = await this.#inspect()
     this.#containerId = info?.id
-    return {
+    const status: RuntimeStatus = {
       kind: 'redroid',
       running: info?.status === 'running',
       paused: info?.status === 'paused',
@@ -157,6 +166,39 @@ export class RedroidRuntime implements RuntimeAdapter {
       since: this.#since,
       containerId: info?.id,
     }
+    if (info?.status === 'running') {
+      const usage = await this.#sampleUsage()
+      if (usage.cpuPct !== undefined) status.cpuPct = usage.cpuPct
+      if (usage.memPct !== undefined) status.memPct = usage.memPct
+    }
+    return status
+  }
+
+  /** 尽力而为：docker stats 取不到就省略字段（issue #56）。 */
+  async #sampleUsage(): Promise<ProcessUsage> {
+    const now = Date.now()
+    if (now - this.#usageAt < USAGE_CACHE_MS) return this.#usage
+    this.#usage = {}
+    try {
+      const result = await this.#runner.run(
+        'docker',
+        ['stats', '--no-stream', '--format', '{{.CPUPerc}} {{.MemPerc}}', this.#name],
+        { timeoutMs: 8_000 },
+      )
+      if (result.code === 0) {
+        const match = /([\d.]+)%\s+([\d.]+)%/.exec(result.stdout)
+        if (match) {
+          const cpuPct = Number(match[1])
+          const memPct = Number(match[2])
+          if (Number.isFinite(cpuPct)) this.#usage.cpuPct = Math.round(cpuPct * 10) / 10
+          if (Number.isFinite(memPct)) this.#usage.memPct = Math.round(memPct * 10) / 10
+        }
+      }
+    } catch {
+      this.#usage = {}
+    }
+    this.#usageAt = now
+    return this.#usage
   }
 
   async #create(): Promise<void> {
@@ -180,8 +222,10 @@ export class RedroidRuntime implements RuntimeAdapter {
     await this.#docker(args)
   }
 
-  async #waitReady(onProgress?: (message: string) => void): Promise<boolean> {
-    onProgress?.(`等待 redroid adbd 就绪（${formatEndpoint(this.#endpoint)}）…`)
+  async #waitReady(
+    onProgress?: (message: string, phase?: BootPhase) => void,
+  ): Promise<boolean> {
+    onProgress?.(`等待 redroid adbd 就绪（${formatEndpoint(this.#endpoint)}）…`, 'waiting-adbd')
     return this.#env.waitForPort(this.#endpoint, {
       timeoutMs: DEFAULT_REDROID_BOOT_TIMEOUT_MS,
       intervalMs: 500,

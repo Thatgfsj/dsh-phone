@@ -209,6 +209,8 @@ export class PhoneLifecycle {
       )
       this.#bootMs = this.#clock.now() - (this.#bootStartedAt ?? this.#clock.now())
       this.#bootStartedAt = undefined
+      // issue #44：成功进入 running 后清空历史错误（只保留当前状态相关错误）
+      this.#lastError = undefined
       this.#transition('running')
       this.#idle.armIdle()
     } catch (error) {

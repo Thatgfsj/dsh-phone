@@ -116,6 +116,10 @@ export function failureFrom(error: unknown): ToolFailure {
   if (code === 'timeout') {
     return { ok: false, code: 'E_TIMEOUT', message, retryable: true }
   }
+  // issue #44：冷启动窗口内设备尚未就绪 → 复用 E_BOOTING 可重试语义
+  if (code === 'device-not-ready') {
+    return bootingFailure(0)
+  }
   if (code === 'E_BOOTING') {
     const bootMs = (error as { bootMs?: unknown } | null)?.bootMs
     return bootingFailure(typeof bootMs === 'number' ? bootMs : 0)

@@ -88,6 +88,9 @@ export const CLIENT_CSS = `
 }
 .dshp-header-button:hover { background: var(--dsw-alias-bg-hover); color: var(--dsw-alias-text-primary); }
 .dshp-header-button:focus-visible { outline: 2px solid var(--dsw-alias-border-accent); outline-offset: 1px; }
+.dshp-boot { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: 360px; }
+.dshp-progress { width: 100%; height: 6px; border-radius: 999px; background: var(--dsw-alias-bg-tertiary); overflow: hidden; }
+.dshp-progress-bar { height: 100%; border-radius: 999px; background: var(--dsw-alias-bg-accent); transition: width 300ms linear; }
 .dshp-empty { display: flex; flex-direction: column; gap: 8px; padding: 8px 4px; }
 .dshp-empty-title { font-weight: 600; }
 .dshp-command {

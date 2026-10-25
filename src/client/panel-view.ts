@@ -12,47 +12,26 @@ import { StreamDecoder } from './decoder.ts'
 import type { ParsedVideoFrame, ServerMessage, VisibilitySources } from './connection.ts'
 import type { Translate } from './i18n.ts'
 import { VisibilityGate } from './connection.ts'
+import { BootStatusPoller, createBootIndicator, describeBootProgress } from './boot.ts'
+import type { BootProgress } from './boot.ts'
+import { statusLabel, statusTone } from './panel-status.ts'
 import { CLIENT_CSS } from './styles.ts'
 import { StreamClient } from './stream.ts'
 import type { StreamState } from './stream.ts'
 import { KEY_BUTTONS, mapKeyboardKey, mapPointerToDevice } from './input.ts'
+import type { ConfigApi } from './settings-api.ts'
 
 export interface PanelViewDeps {
   React: typeof ReactNamespace
   t: Translate
+  api: ConfigApi
 }
 
 /** Build the panel body component for the current locale. */
 export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.ComponentType {
-  const { React, t } = deps
+  const { React, t, api } = deps
   const h = React.createElement
-
-  /** Short status badge copy per state. */
-  function statusLabel(state: StreamState): string {
-    switch (state) {
-      case 'idle':
-        return t('panel.status.idle')
-      case 'connecting':
-        return t('panel.status.connecting')
-      case 'open':
-        return t('panel.status.open')
-      case 'ready':
-        return t('panel.status.ready')
-      case 'reconnecting':
-        return t('panel.status.reconnecting')
-      case 'closed':
-        return t('panel.status.closed')
-      case 'hidden':
-        return t('panel.status.hidden')
-    }
-  }
-
-  function statusTone(state: StreamState): string {
-    if (state === 'ready') return 'ok'
-    if (state === 'connecting' || state === 'open' || state === 'reconnecting') return 'warn'
-    return 'neutral'
-  }
-
+  const BootIndicator = createBootIndicator({ React, t })
   function PhonePanel(): ReactNamespace.ReactElement {
     const stageRef = React.useRef<HTMLDivElement | null>(null)
     const canvasRef = React.useRef<HTMLCanvasElement | null>(null)
@@ -63,6 +42,8 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
     const [kind, setKind] = React.useState<DecoderKind | 'pending'>('pending')
     const [meta, setMeta] = React.useState<{ width: number; height: number; codec: string; maxFps: number }>()
     const [error, setError] = React.useState<string>()
+    const [boot, setBoot] = React.useState<BootProgress>()
+    const bootPollerRef = React.useRef<BootStatusPoller | null>(null)
 
     React.useEffect(() => {
       const stage = stageRef.current
@@ -101,9 +82,31 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
             setError(undefined)
           } else if (message.type === 'error') {
             setError(t('panel.error.stream', { message: message.message }))
+          } else if (message.type === 'state') {
+            if (message.state === 'booting') {
+              if (message.bootMs !== undefined) setBoot(describeBootProgress(message.bootMs))
+              if (bootPollerRef.current === null) {
+                bootPollerRef.current = new BootStatusPoller({
+                  getStatus: () => api.getStatus(),
+                  onProgress: (progress) => setBoot(progress),
+                })
+              }
+              bootPollerRef.current.start()
+            } else {
+              bootPollerRef.current?.stop()
+              bootPollerRef.current = null
+              setBoot(undefined)
+            }
           }
         },
-        onState: (state) => setStatus(state),
+        onState: (state) => {
+          setStatus(state)
+          if (state === 'hidden' || state === 'closed') {
+            bootPollerRef.current?.stop()
+            bootPollerRef.current = null
+            setBoot(undefined)
+          }
+        },
         onError: (failure) =>
           setError(
             failure.code === 'E_AUTH' ? t('panel.error.auth') : t('panel.error.stream', { message: failure.message }),
@@ -148,9 +151,9 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
         client.dispose()
         decoder.dispose()
         clientRef.current = null
+        bootPollerRef.current?.stop()
+        bootPollerRef.current = null
       }
-      // Mount once: the client/decoder own their own reconnect lifecycle.
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     const pointFromEvent = (event: ReactNamespace.PointerEvent<HTMLCanvasElement>): { x: number; y: number } => {
@@ -193,9 +196,10 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
 
     const placeholder = ((): string | undefined => {
       if (error !== undefined) return undefined
+      if (boot !== undefined) return undefined
       if (status === 'ready') return undefined
       if (status === 'hidden') return t('panel.status.hidden')
-      return statusLabel(status)
+      return statusLabel(t, status)
     })()
 
     return h(
@@ -205,7 +209,8 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
       h(
         'div',
         { className: 'dshp-row' },
-        h('span', { className: 'dshp-badge', 'data-tone': statusTone(status) }, statusLabel(status)),
+        h('span', { className: 'dshp-badge', 'data-tone': statusTone(status) }, statusLabel(t, status)),
+        boot === undefined ? null : h(BootIndicator.badge, { progress: boot }),
         meta === undefined
           ? null
           : h(
@@ -252,6 +257,7 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
           onPointerCancel: endPointer,
           onKeyDown,
         }),
+        boot === undefined ? null : h(BootIndicator.overlay, { progress: boot }),
         error === undefined
           ? null
           : h('div', { className: 'dshp-placeholder' }, h('div', { className: 'dshp-error' }, error)),

@@ -29,7 +29,7 @@ export function createPhonePanel(deps: PanelDeps): ReactNamespace.ComponentType 
   const { React, t } = deps
   const h = React.createElement
   const api = deps.api ?? createFetchConfigApi()
-  const PhonePanelView = createPhonePanelView({ React, t })
+  const PhonePanelView = createPhonePanelView({ React, t, api })
   const PanelEmptyState = createPanelEmptyState({ React, t })
 
   function PhonePanel(): ReactNamespace.ReactElement {

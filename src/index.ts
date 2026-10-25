@@ -56,6 +56,7 @@ interface WebHostContext {
 
 function configView(config: PhoneConfig): ConfigView {
   return {
+    enabled: config.enabled,
     runtime: config.runtime,
     onboarding: readOnboarding(config),
     stream: {

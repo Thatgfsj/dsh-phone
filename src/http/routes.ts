@@ -35,6 +35,8 @@ import { ApiError, readJsonBody, sendError, sendJson, sendPng, sendSuccess } fro
 export const API_PREFIX = '/dsh-phone/api'
 
 export interface ConfigView {
+  /** 插件总开关（Config.enabled，非 volatile；只读展示，变更需重载）。 */
+  enabled: boolean
   runtime: string
   /** 首次使用守卫状态（issue #30）；面板据此决定是否展示引导。 */
   onboarding: OnboardingState
@@ -42,6 +44,8 @@ export interface ConfigView {
 }
 
 export interface ConfigSnapshot {
+  /** 插件总开关（只读；客户端据此显示「已启用/已关闭（只读）」）。 */
+  enabled: boolean
   runtime: string
   onboarding: OnboardingState
   attach: { endpoint: string; userHint: string; resolved: boolean }
@@ -90,6 +94,7 @@ function configSnapshot(deps: SnapshotSource): ConfigSnapshot {
   const view = deps.getConfigView()
   const onboarding = (readPath(descriptor.value, ['onboarding']) ?? {}) as Record<string, unknown>
   return {
+    enabled: view.enabled === true,
     runtime: view.runtime,
     onboarding: {
       status: isOnboardingStatus(onboarding.status) ? onboarding.status : view.onboarding.status,
@@ -146,6 +151,14 @@ function toApiError(error: unknown): ApiError {
   // 决策树全失败：503 + 安装指引（docs/protocol.md §3、issue #28）
   if (error instanceof RuntimeUnavailableError) {
     return new ApiError(503, 'E_RUNTIME_UNAVAILABLE', error.message, false)
+  }
+  // issue #44：设备尚未就绪（冷启动窗口内截图输出异常）按可重试的 booting 中间态返回
+  if ((error as { code?: unknown } | null)?.code === 'device-not-ready') {
+    return new ApiError(200, 'E_BOOTING', '设备正在就绪（可能仍在开机），稍后重试', true)
+  }
+  // issue #44：设备尚未就绪（冷启动窗口内截图输出异常）按可重试的 booting 中间态返回
+  if ((error as { code?: unknown } | null)?.code === 'device-not-ready') {
+    return new ApiError(200, 'E_BOOTING', '设备正在就绪（可能仍在开机），稍后重试', true)
   }
   if (error instanceof ConfigWriteError) {
     if (error.code === 'conflict') return new ApiError(409, 'E_CONFIG_CONFLICT', error.message, true)

@@ -88,6 +88,8 @@ Host 不直接读写 `cordis.patch.yml`，不自行实现 runtime/收流；runti
 
 1. `service.ensureInteractive()`：stopped/paused → 懒启动并阻塞；已在 booting → **立即**返回
    `{ok:false, code:'E_BOOTING', bootMs, retryable:true}`（不抛错，SPEC §3.4）；
+   冷启动窗口内 ADB 握手失败会在 boot 预算内自动退避重试（issue #44，见 §4），首次调用可能阻塞数十秒，
+   但不会因一次 8s 握手超时失败；
 2. 执行设备动作；
 3. 异常 → 结构化错误（runtime 不可用带安装指引；超时可重试；其余 `E_DEVICE_COMMAND`）。
 
@@ -132,6 +134,12 @@ activity/window/display/battery/cpuinfo/meminfo/gfxinfo/input/power/wifi。
   `startControlOnly`（只建 control socket，不编码视频）——满足 SPEC §3.6「无人看不开流」。
 - **断连**：`AdbConnection.disconnected` → 关闭会话 + `lifecycle.notifyDisconnected` → state=stopped，
   下次交互自动重连。
+- **冷启动重试（issue #44）**：`#start/#resume` 建立 ADB 连接时，若握手/连接失败按
+  500ms→1s→2s→4s→8s 退避重试，预算 `bootTimeoutMs − 20s`（默认 100s）；耗尽才抛错并保留最后一次原因。
+  截图失败（空输出/非法 base64/非 PNG）在设备内重试 3 次，仍失败则 `E_DEVICE_NOT_READY`
+  （`AdbError.code='device-not-ready'`，可重试）→ HTTP/工具层映射为 `E_BOOTING`。
+- **lastError 清理**：成功进入 running 后 state.ts 清空 `lastError`，`service.status()` 在 running 时
+  不再回退展示历史启动/探测错误；只有当前状态相关错误（如 pause 失败、断连）才显示。
 - **状态事件**：`onStateChange(fn)` 由生命周期 onChange 映射成 `PhoneStatus`。
 - **资源**：`dispose()` 逆序关流→断 ADB→释放生命周期；`ctx.effect` 保证卸载回收。
 - **配置实时读**：每次从 `deps.config()` 读 volatile 最新值（`.get()`），不缓存快照。
@@ -161,7 +169,7 @@ adapter 不可用失效、启动失败立即重探。
 | 方法/路径 | 行为 |
 |---|---|
 | GET `/status` | onboarding pending/declined → 200 `{ok:false,error:{code:'E_ONBOARDING_*',...}}`（不碰设备）；accepted → `service.status()`；no-store |
-| GET `/config` | `{runtime, onboarding:{status,choice}, attach:{endpoint,userHint,resolved}, stream:{maxSize,maxFps,bitrate}, revision}`；revision 来自 settings.describe（缺失 settings → 503 E_NO_WEB） |
+| GET `/config` | `{enabled, runtime, onboarding:{status,choice}, attach:{endpoint,userHint,resolved}, stream:{maxSize,maxFps,bitrate}, revision}`；`enabled` 来自 Config.enabled（只读、非 volatile，变更需重载）；主 handler 与 enabled=false 的只读 handler 形状一致；revision 来自 settings.describe（缺失 settings → 503 E_NO_WEB） |
 | POST `/config` | body `{path:string[], value, revision?}`；只允许五键（attach 三键 + onboarding 两键）；R5 检查；写后回读 + 复验；成功返回同上 snapshot |
 | POST `/attach/verify` | body `{endpoint}`；adb connect(timeout 3000) + `getprop ro.product.model`；成功 200 `{ok:true,latencyMs,banner}`，失败 200 `{ok:false,latencyMs,error}`；不落盘 |
 | GET `/screenshot` | `image/png` + no-store；onboarding pending/declined → 200 JSON `E_ONBOARDING_*`；booting → 200 JSON `E_BOOTING`（error.bootMs） |
@@ -230,6 +238,8 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 
 工具层错误：`E_BOOTING`（带 bootMs）、`E_RUNTIME_UNAVAILABLE`（带安装指引 hints，不可重试）、
 `E_TIMEOUT`、`E_DEVICE_COMMAND`。
+冷启动窗口内的设备未就绪（截图输出异常）映射为 `E_BOOTING`（HTTP 200 / 工具 `ok:false, retryable:true`），
+不做成 `E_DEVICE_COMMAND` 500，避免把「还在开机」当成设备故障。
 
 ## 6. 与 architecture.md / SPEC 的偏差（有意，需 Lead 知悉）
 

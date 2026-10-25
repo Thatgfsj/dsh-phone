@@ -7,6 +7,7 @@ import type {
   Endpoint,
   KillSignal,
   Platform,
+  ProcessUsage,
   RuntimeEnvironment,
   RuntimeProbe,
   SpawnedProcess,
@@ -37,6 +38,8 @@ export class FakeCommandRunner implements CommandRunner {
   readonly kills: { pid: number; signal: KillSignal }[] = []
   readonly alive = new Set<number>()
   readonly #handlers: { match: (file: string, args: readonly string[]) => boolean; handler: FakeHandler }[] = []
+  /** emulator -list-avds 返回的 AVD 列表（issue #56）。 */
+  avds: string[] = ['dsh-phone-avd']
   #nextPid = 1000
 
   /** 注册按 (file, args) 匹配的处理函数；后注册的优先。 */
@@ -69,6 +72,7 @@ export class FakeCommandRunner implements CommandRunner {
     _options?: unknown,
   ): Promise<CommandResult> {
     this.calls.push({ file, args: [...args] })
+    if (args[0] === '-list-avds') return ok(this.avds.length > 0 ? this.avds.join('\n') + '\n' : '')
     for (const entry of this.#handlers) {
       if (entry.match(file, args)) return entry.handler(file, args)
     }
@@ -104,7 +108,12 @@ export class FakeEnvironment implements RuntimeEnvironment {
   readonly commands = new Set<string>()
   emulatorPath: string | undefined
   accelerationResult: RuntimeProbe = { ok: true, detail: 'fake 虚拟化可用' }
+  /** waitForPort 返回 true 的端口（模拟 adbd 就绪）。 */
   readonly openPorts = new Set<number>()
+  /** isPortBusy 返回 true 的端口（模拟端口已被占用，issue #56）。 */
+  readonly busyPorts = new Set<number>()
+  avdManagerPath: string | undefined
+  processUsage: ProcessUsage = {}
 
   async platform(): Promise<Platform> {
     return this.platformValue
@@ -133,6 +142,19 @@ export class FakeEnvironment implements RuntimeEnvironment {
     // 测试里不等真实超时：固定跳一个 tick 后按 openPorts 判断
     await new Promise<void>((resolve) => setImmediate(resolve))
     return this.openPorts.has(endpoint.port)
+  }
+
+  async isPortBusy(port: number): Promise<boolean> {
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    return this.busyPorts.has(port)
+  }
+
+  async findAvdManager(): Promise<string | undefined> {
+    return this.avdManagerPath
+  }
+
+  async sampleProcessUsage(): Promise<ProcessUsage> {
+    return this.processUsage
   }
 }
 

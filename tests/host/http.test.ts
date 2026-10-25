@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { test } from 'node:test'
 
-import { createApiHandler, isValidEndpointString } from '../../src/http/routes.ts'
+import { createApiHandler, createReadOnlyHandler, isValidEndpointString } from '../../src/http/routes.ts'
 import { RuntimeUnavailableError } from '../../src/runtime/types.ts'
 import type { ConfigView, HttpRouteDeps } from '../../src/http/routes.ts'
 import type { PhoneStatus } from '../../src/phone/contracts.ts'
@@ -111,6 +111,7 @@ function makeHarness(overrides: Partial<HttpRouteDeps> = {}): Harness {
     rechecked: 0,
     recheckStatus: { state: 'running', runtime: 'attach', platform: 'linux' } as PhoneStatus,
     view: {
+      enabled: true,
       runtime: 'attach',
       onboarding: { status: 'accepted', choice: '' },
       stream: { maxSize: 720, maxFps: 15, bitrate: 2000000 },
@@ -187,6 +188,7 @@ test('GET /status 与 GET /config：成功体 + no-store', async () => {
   const config = await invoke(harness, { method: 'GET', url: '/dsh-phone/api/config' })
   assert.equal(config.statusCode, 200)
   assert.deepEqual(json(config).value, {
+    enabled: true,
     runtime: 'attach',
     onboarding: { status: 'pending', choice: '' },
     attach: { endpoint: '', userHint: '', resolved: false },
@@ -561,4 +563,60 @@ test('isValidEndpointString：host:port 严格校验', () => {
   assert.equal(isValidEndpointString('127.0.0.1:70000'), false)
   assert.equal(isValidEndpointString(''), false)
   assert.equal(isValidEndpointString(42), false)
+})
+/* ---------------------- issue #52：GET /config 暴露 enabled ---------------------- */
+
+function readOnlySnapshot(harness: Harness, enabled: boolean): Promise<FakeResponse> {
+  const handler = createReadOnlyHandler({
+    getSettings: () => harness.settings as never,
+    getConnection: () => harness.connection,
+    getConfigView: () => ({ ...harness.view, enabled }),
+  })
+  const response = makeResponse()
+  return handler
+    .handle(
+      makeRequest({ method: 'GET', url: '/dsh-phone/api/config' }),
+      response,
+    )
+    .then(() => response)
+}
+
+test('GET /config：enabled=true/false 两个 handler 都返回 enabled 且形状一致', async () => {
+  const harness = makeHarness()
+
+  // 主 handler（enabled=true）
+  harness.view.enabled = true
+  const main = await invoke(harness, { method: 'GET', url: '/dsh-phone/api/config' })
+  assert.equal(main.statusCode, 200)
+  const mainValue = json(main).value
+  assert.equal(mainValue.enabled, true)
+
+  // 只读 handler（enabled=false）：形状与主 handler 完全一致
+  harness.view.enabled = false
+  const readOnly = await readOnlySnapshot(harness, false)
+  assert.equal(readOnly.statusCode, 200)
+  const readOnlyValue = json(readOnly).value
+  assert.equal(readOnlyValue.enabled, false)
+  assert.deepEqual(Object.keys(readOnlyValue).sort(), Object.keys(mainValue).sort())
+  assert.equal(readOnlyValue.runtime, mainValue.runtime)
+  assert.deepEqual(readOnlyValue.attach, mainValue.attach)
+  assert.deepEqual(readOnlyValue.onboarding, mainValue.onboarding)
+  assert.deepEqual(readOnlyValue.stream, mainValue.stream)
+
+  // 只读 handler 在 enabled=true 时也保留 enabled（形状统一）
+  const readOnlyTrue = await readOnlySnapshot(harness, true)
+  assert.equal(json(readOnlyTrue).value.enabled, true)
+  assert.deepEqual(
+    Object.keys(json(readOnlyTrue).value).sort(),
+    Object.keys(mainValue).sort(),
+  )
+})
+
+test('GET /config（只读 handler）：enabled=false 时仍可读，且不改写/不要求写权限', async () => {
+  const harness = makeHarness()
+  const response = await readOnlySnapshot(harness, false)
+  assert.equal(response.statusCode, 200)
+  assert.equal(json(response).ok, true)
+  assert.equal(json(response).value.enabled, false)
+  assert.equal(response.headers['cache-control'], 'no-store')
 })

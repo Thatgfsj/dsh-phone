@@ -16,6 +16,7 @@ const STATUS_SCHEMA = {
     memPct: { type: 'number' },
     uptimeMs: { type: 'integer' },
     bootMs: { type: 'integer' },
+    phase: { type: 'string' },
     endpoint: {
       type: 'object',
       additionalProperties: false,
@@ -43,6 +44,7 @@ interface StatusLike {
   memPct?: number
   uptimeMs?: number
   bootMs?: number
+  phase?: string
   endpoint?: { host: string; port: number }
   lastError?: string
   ok?: boolean
@@ -55,6 +57,7 @@ interface StatusLike {
 function renderStatus(status: StatusLike): string {
   const parts = [`state=${status.state}`, `runtime=${status.runtime}`, `platform=${status.platform}`]
   if (status.state === 'booting' && status.bootMs !== undefined) parts.push(`bootMs=${status.bootMs}`)
+  if (status.state === 'booting' && status.phase) parts.push('phase=' + status.phase)
   if (status.endpoint) parts.push(`endpoint=${status.endpoint.host}:${status.endpoint.port}`)
   if (status.cpuPct !== undefined) parts.push(`cpuPct=${status.cpuPct}`)
   if (status.memPct !== undefined) parts.push(`memPct=${status.memPct}`)
@@ -72,7 +75,7 @@ export function createStatusTool(deps: ToolDeps): ToolDefinition {
   return defineTool({
     name: 'phone_status',
     description:
-      '查询 dsh-phone 管理的 Android 实例状态。任何任务的第一步必调。返回 state（stopped/booting/running/paused）、runtime（redroid/emulator/attach）、platform、cpuPct/memPct/uptimeMs/bootMs/endpoint。state=booting 时等待后重试，不要中断任务；state=paused 时任意 phone_* 调用会自动唤醒。',
+      '查询 dsh-phone 管理的 Android 实例状态。任何任务的第一步必调。返回 state（stopped/booting/running/paused）、runtime（redroid/emulator/attach）、platform、cpuPct/memPct/uptimeMs/bootMs/endpoint。state=booting 时返回 bootMs 与可选 phase（launching/waiting-adbd/connecting-adb/ready），等待后重试，不要中断任务；state=paused 时任意 phone_* 调用会自动唤醒。',
     parameters: {},
     isConcurrencySafe: () => true,
     output: {
