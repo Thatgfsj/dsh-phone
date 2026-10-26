@@ -90,6 +90,33 @@ nc -z 127.0.0.1 5555     # Windows: Test-NetConnection 127.0.0.1 -Port 5555
 2. 面板开启后：左侧是实时画面（WebCodecs 硬解，失败回退 TinyH264 软解），底部有 HOME/BACK/RECENTS/ENTER/DEL 按键，状态栏显示连接与解码状态。
 3. **不可见即停流**：切走 tab、折叠右栏或页面不可见时，客户端立即断流；Host 在最后一个 viewer 离开 5s 后停止 scrcpy 会话（实例继续 running）。
 
+### 2.1 生命周期控制（启动 / 停止 / 重启，issue #83）
+
+面板 header 与「设置 → 手机」都有生命周期入口，状态徽章显示 `stopped` / `booting` / `running` / `paused`
+或被外部关闭。
+
+| 动作 | owned（插件拉起的实例） | adopted（你自己的模拟器/真机） |
+|---|---|---|
+| 启动 | 拉起实例（booting → running，面板显示阶段进度） | 重新连接 ADB，**不会**启动新实例 |
+| 停止 | 保存快照后退出（按运行时语义） | **只断开连接**，不杀进程；提示「已断开（实例由你启动）」 |
+| 重启 | 先停后启 | 断开 → 重连 |
+
+- **外部 kill 兜底**：`kill -9` 掉 emulator 或关掉 adb 端口后，**2s 内**状态变「已停止 / 被外部关闭」
+  并给出可读原因；stage 显示「启动手机」/「重启」按钮，不会卡在 running 黑屏。
+- **安全边界**：`stop` 只能由用户在浏览器里触发（同源鉴权）；Agent 的本地 token 通道只能
+  `start`/`restart` —— 防止 Agent 自己把手机关掉/重启打断你的操作。
+- **互斥**：连点或并发请求会合并/排队，超时给可读错误 + 「重试」。
+- **卸载/重载**：owned 实例会被停止（尽量保存快照），adopted 只断开，不再留孤儿进程。
+
+### 2.2 肥鱼手机行为（issue #87，可选）
+
+若用了一键准备（或手动执行过 `system/provision-device.sh`），实例会变成「肥鱼手机」：
+
+- 中文系统（`zh-CN`）、桌面**空白**（无图标/widget，HOME 由 `com.dafeiyu.shell` 提供）；
+- 两张壁纸 `111`/`222` 轮换；文件管理器里没有 YouTube（已卸载）；AVD 默认 `medium_phone`（1080x2400）。
+- 想恢复原生桌面/其他语言：新建 AVD 或重装 system image，不走 `system/` 定制即可；
+  来源、许可与手动步骤见 [../system/README.md](../system/README.md)。
+
 ## 3. 日常操作 SOP（对应 SPEC §5.1）
 
 ```

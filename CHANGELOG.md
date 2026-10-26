@@ -5,6 +5,70 @@
 
 ## [Unreleased]
 
+## [v0.4.0] - 2026-10-27
+
+第五次发布：**生命周期控制**（启动 / 停止 / 重启 + 外部 kill 兜底）与 **肥鱼手机定制**（一键把实例变成「大肥鱼的手机」）。
+
+### Added
+
+- **生命周期控制三端打通**（[#83](https://github.com/Thatgfsj/dsh-phone/issues/83)）：Host API
+  （[#84](https://github.com/Thatgfsj/dsh-phone/issues/84)：`GET /dsh-phone/api/runtime` 返回
+  state/running/owned/adopted/pid/endpoint/since/busy/lastError；`POST /dsh-phone/api/runtime`
+  `{action:'start'|'stop'|'restart'}` 返回 202 由 UI 轮询；**`stop` 只允许浏览器同源鉴权**，
+  Agent token 只能 start/restart）、客户端 UI（[#85](https://github.com/Thatgfsj/dsh-phone/issues/85)：
+  面板 header 状态徽章 + 重启/关闭按钮、停止或被外部关闭后的空态与「启动手机」大按钮、动作进度与失败重试、
+  设置页同入口与所有权说明）、runtime（[#86](https://github.com/Thatgfsj/dsh-phone/issues/86)：
+  `RuntimeStatus.owned/adopted` + `adapter.isAlive()`、**2s 看门狗**——外部 `kill -9` 后 ≤2s 变
+  `stopped` 并给出可读原因、`start/stop/restart` 单一互斥 + 超时、`dispose()` 按所有权收尾
+  （owned 停机并保存快照、adopted 只断开），**5s 硬预算**避免卡住插件卸载）。
+- **肥鱼手机定制层**（[#87](https://github.com/Thatgfsj/dsh-phone/issues/87)、
+  [#96](https://github.com/Thatgfsj/dsh-phone/pull/96)）：新增 `system/`——`wallpapers/{111,222}.png`
+  （720x1280）、`feiyu-shell/`（极简空白 HOME app：Java 源码 + `build.sh` + 预构建 `feiyu-shell.apk`，
+  双壁纸轮换）、`provision-device.sh`（幂等：设壁纸/装 app/设 HOME/删 YouTube/切中文/重启/校验/截图）、
+  `avd-config.ini`、`README.md`（来源与许可）。**实机验证**：AVD **1080x2400**、`zh-CN`、
+  空白首页（无图标/widget）、壁纸 111/222 轮换、YouTube 已卸载。
+- **一键准备自动应用定制**（[#88](https://github.com/Thatgfsj/dsh-phone/issues/88)/
+  [#94](https://github.com/Thatgfsj/dsh-phone/pull/94)）：provisioning 新增 `step=customize`
+  （装好 Android 后自动应用肥鱼定制，失败不阻断、日志可查）；`package.json` 的 `files` 纳入 `system/`，
+  `description` 改为「这是大肥鱼的手机，主人不要动大肥鱼的手机喵」。
+- **生命周期客户端验收**（[#92](https://github.com/Thatgfsj/dsh-phone/issues/92)/
+  [#95](https://github.com/Thatgfsj/dsh-phone/pull/95)）：11 个独立单测（动作状态机 / 错误映射 /
+  owned vs adopted 文案 / 轮询）+ `docs/client.md` §4.5 人工核对清单。
+
+### Fixed
+
+- **#86 合并后 main 无法编译**（[#90](https://github.com/Thatgfsj/dsh-phone/pull/90)，
+  Part of [#83](https://github.com/Thatgfsj/dsh-phone/issues/83)）：`src/phone/contracts.ts` 的
+  `PhoneStatus` 去掉重复字段 `owned/adopted/pid`（#84 与 #86 各加一份 → TS2300）；
+  `src/phone/service.ts` 从 1159 行拆分到 **893 行**（新增 `service-types.ts`/`service-helpers.ts`/
+  `control.ts`/`usage.ts`，满足 1000 行硬线），并补 #83 专项测试。
+
+### Changed
+
+- **文案**（[#89](https://github.com/Thatgfsj/dsh-phone/issues/89)/
+  [#93](https://github.com/Thatgfsj/dsh-phone/pull/93)）：`locale/zh.json`、`locale/en.json` 与 README
+  首段改为「这是大肥鱼的手机，主人不要动大肥鱼的手机喵」（标题「肥鱼的手机」保留）。
+- **文档**：README（版本/状态/能力/安装 tgz；新增肥鱼手机截图
+  `docs/screenshots/feiyu-home-{1,2}.webp`；指向 [system/README.md](system/README.md)）、
+  `docs/install.md`（版本与 tgz 名、包内新增 `system/`）、`docs/verification.md`（新增 §9：
+  #87 实机结果与 #83 单测覆盖）、`docs/usage.md`（生命周期按钮与肥鱼手机行为）。
+- 版本号 `0.3.0` → `0.4.0`（[#97](https://github.com/Thatgfsj/dsh-phone/issues/97)）。
+
+### 已知限制与未验证项
+
+- **未完成**：[#72](https://github.com/Thatgfsj/dsh-phone/issues/72)（phone_key 白名单 / screenshot 掩码 /
+  booting 断连 / control 单飞）仍在跟踪。
+- **#40 剩余项**：真实浏览器渲染/WebCodecs/TinyH264 的人工验收、redroid（本机无 Docker）、
+  `phone_shell` 审批 UI 点击仍是人工待办；详见 [docs/verification.md](docs/verification.md) §4/§5。
+- **冷启动 33–95s** 有客观下限（Android 14 google_apis）；`aosp_atd` 未实测；温启动 ~15s 为本机数据。
+- **npm 包名冲突未改名**：npm 上的 `dsh-phone` 属于另一个项目（PonyDevAI/dsh-phone），本仓库未发布
+  registry；必须用 Release tgz、源码目录或 git 安装。
+- **肥鱼定制只在单一组合验证**：`system-images;android-34;google_apis;x86_64` +
+  AVD `medium_phone`（1080x2400 @420dpi）；其他 API/ABI/设备档位与 Windows/macOS 宿主未验证；
+  `provision-device.sh` 幂等，但不承诺跨镜像一致。
+- **生命周期动作语义**：adopted 实例的「停止」= 断开连接（不杀用户的模拟器/真机）；`stop` 只能由用户
+  在浏览器里触发（Agent token 仅 start/restart），这是防自我授权红线，不是缺陷。
+
 ## [v0.3.0] - 2026-10-26
 
 第四次发布：**开箱即用**（一键准备运行环境）与 **emulator 启动速度专项**。

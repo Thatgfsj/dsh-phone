@@ -3,13 +3,13 @@
 > 肥鱼的手机：这是大肥鱼的手机，主人不要动大肥鱼的手机喵。给 DeepSeek Harness（DSH）提供一台运行在后端、经浏览器右侧栏呈现的 Android 实例，并注册 9 个 `phone_*` 工具供 Agent 直接操作。
 
 [![DSH](https://img.shields.io/badge/DSH-0.2.1--rc.2-blue)](https://github.com/deepseek-ai/deepseek-harness)
-[![version](https://img.shields.io/badge/version-v0.3.0-blueviolet)](#版本与状态)
+[![version](https://img.shields.io/badge/version-v0.4.0-blueviolet)](#版本与状态)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![files ≤1000 lines](https://img.shields.io/badge/file-%E2%89%A41000%20lines-brightgreen)](CONTRIBUTING.md)
 
 ## 版本与状态
 
-**v0.3.0（已发布）**：**开箱即用 + 启动速度**——首次使用可「一键准备」运行环境（安装 emulator/系统镜像/AVD，进度日志，完成后自动启用）；emulator 温启动 **~15s**、暂停恢复 **~19s**（冷启动 33–95s 有客观下限）。同时包含 `attach.endpoint` 生效修复、Agent 通道安全收紧、视频流双页互踢/WS 背压修复（[#73](https://github.com/Thatgfsj/dsh-phone/issues/73)）、Release tgz/install-check 安装可用性。发布说明见 [CHANGELOG.md](CHANGELOG.md#v030---2026-10-26)，验收状态见 [docs/verification.md](docs/verification.md)。
+**v0.4.0（已发布）**：**生命周期控制 + 肥鱼手机定制**——面板/设置页可「启动 / 停止 / 重启」，外部 `kill -9` 后 **2s 内**变「已停止/被外部关闭」并给出一键重启；区分 owned（插件拉起的实例，关闭会保存快照）与 adopted（你自己的模拟器，停止只断开）。新增 `system/` 定制层，可把实例变成「大肥鱼的手机」：中文、空白桌面、双壁纸轮换、无 YouTube（实机验证 1080x2400）。发布说明见 [CHANGELOG.md](CHANGELOG.md#v040---2026-10-27)，验收状态见 [docs/verification.md](docs/verification.md)。
 
 - 需求原文：[docs/SPEC.md](docs/SPEC.md)（**禁止改写**）。实现与需求的差异、未验证项见 [docs/host.md](docs/host.md)、[docs/runtime.md](docs/runtime.md)、[docs/stream.md](docs/stream.md)、[docs/client.md](docs/client.md)。
 - 集成点校准（DSH 0.2.1-rc.2 本机源码证据）：[docs/calibration.md](docs/calibration.md)；架构与协议契约：[docs/architecture.md](docs/architecture.md)、[docs/protocol.md](docs/protocol.md)。
@@ -22,7 +22,20 @@
 - **懒启动与分级休眠**：首次工具调用或首次打开面板才拉起实例；**20 分钟**无交互 → `paused`，30 分钟或资源紧张 → `stopped`。`attach` 永不被插件停止；`lifecycle.prewarm`（默认 false）可在插件加载后预热。booting 时 `phone_status` 返回 `bootMs` 与 `phase`（launching/waiting-adbd/connecting-adb/ready），面板展示启动进度。
 - **双链路解耦**：Agent 只看按需单帧截图（约 100–300ms、零持续开销）；人看 scrcpy H.264 视频流（默认 720p / 15fps / 2Mbps，仅面板可见时传输）。Host 零转码；浏览器 WebCodecs 硬解，TinyH264 WASM 软解兜底。
 - **右侧栏面板与设置页**：面板是右侧栏的一个 tab（不遮蔽官方右栏），可从**会话头部手机按钮**或设置页打开；加载后 best-effort 自动打开（pending 时由面板首屏直接征询同意）。设置页维护「一句话」、显示解析状态/`enabled` 只读状态、提供重置入口与「打开手机面板」按钮。
+- **生命周期控制（启动 / 停止 / 重启）**：面板 header 与设置页都有入口；**2s 看门狗**对账进程/端口——手机被外部 `kill -9` 后 ≤2s 状态变「已停止 / 被外部关闭」并给出「启动手机」；区分 **owned**（插件拉起：关闭会保存快照后退出）与 **adopted**（用户自己的实例：停止只断开、不杀进程）；`stop` 只能由用户在浏览器触发（Agent token 仅 start/restart）。
+- **肥鱼手机定制（可选）**：`system/` 提供一键换肤工具集——中文系统、空白桌面（无图标/widget）、两张壁纸轮换、去掉 YouTube、AVD 1080x2400；一键准备（Provisioning）会在 `step=customize` 自动应用，也可手动跑 `system/provision-device.sh`。详见 [system/README.md](system/README.md)。
 - **首次接入「一句话」**：用户填一句话（如「用的雷电模拟器，装在默认位置」），操作 Agent 用本地 token 通道完成探测、连通验证与**定点**配置写入。
+
+## 肥鱼手机
+
+`system/` 是「手机换肤」工具集（**插件本身不需要它**）：中文系统 + 空白桌面（无图标/widget）+ 两张壁纸轮换 + 去掉 YouTube，面向 `android-34;google_apis;x86_64` + AVD `medium_phone`（1080x2400 @420dpi）。一键准备会在 `step=customize` 自动应用；手动执行见 `system/provision-device.sh`（幂等），来源与许可见 [system/README.md](system/README.md)。
+
+<p>
+  <img src="docs/screenshots/feiyu-home-1.webp" alt="肥鱼手机首页（壁纸 111）" width="260">
+  <img src="docs/screenshots/feiyu-home-2.webp" alt="肥鱼手机首页（壁纸 222）" width="260">
+</p>
+
+> 实机截图：AVD 1080x2400、`zh-CN`、空白首页、壁纸 111/222 轮换、YouTube 已卸载（验收细节见 [docs/verification.md](docs/verification.md) §9）。
 
 ## 平台与前置条件
 
@@ -39,15 +52,15 @@
 
 ## 安装
 
-**v0.3.0 已可用。** 要求：DSH `>=0.2.1-rc.2 <0.3.0`、Node `>=20`；宿主浏览器需支持 WebCodecs（Chrome / Edge 等），不支持时自动回退 TinyH264 软解。
+**v0.4.0 已可用。** 要求：DSH `>=0.2.1-rc.2 <0.3.0`、Node `>=20`；宿主浏览器需支持 WebCodecs（Chrome / Edge 等），不支持时自动回退 TinyH264 软解。
 
 推荐安装 **GitHub Release 的预构建 tgz**（包内已有 `lib/`，**无需** `npm run build`）：
 
 ```sh
 # 1) 从 Releases 的 Assets 下载 dsh-phone-<version>.tgz（或 gh CLI）
-gh release download v0.3.0 -R Thatgfsj/dsh-phone -p 'dsh-phone-*.tgz'
+gh release download v0.4.0 -R Thatgfsj/dsh-phone -p 'dsh-phone-*.tgz'
 # 2) 安装到 web profile
-dsh plugin --profile web add ./dsh-phone-0.3.0.tgz
+dsh plugin --profile web add ./dsh-phone-0.4.0.tgz
 # 3) 必需：确认 bundle 真的被选中，再重启 DSH + 刷新页面（F5）
 dsh --profile web --dump-config | grep -n -A 8 'dsh-phone'
 ```
@@ -217,6 +230,8 @@ npm pack --dry-run
 - **启动时间**：温启动 ~15s / 暂停恢复 ~19s 为本机实测；冷启动 33–95s 有客观下限（Android 14 google_apis），`aosp_atd` 未实测。
 - **一键准备**需用户点击且浏览器同源触发（Agent token 不允许自动安装软件）；下载体积/时长取决于网络与 system image。
 - **#40 部分完成**：真实 emulator attach 与 scrcpy 实连已通过（#58：Host WS 102 帧/10s、控制通道/中文输入/截图 PASS）；仍待人工/环境的项：emulator 自启（B 分支）、真实浏览器渲染/WebCodecs/TinyH264、redroid（本机无 Docker）、审批 UI 点击。详见 [docs/verification.md](docs/verification.md) §2/§7 与 §4/§5 待办。
+- **生命周期动作的边界**：`stop` 只由用户在浏览器触发（Agent token 仅 start/restart）；adopted 实例「停止」= 断开连接，不会关掉你的模拟器/真机；owned 实例关闭前会尽量保存快照。
+- **肥鱼定制只验证过单组合**：`android-34;google_apis;x86_64` + AVD `medium_phone`（1080x2400）；其他 API/ABI/设备档位与 Windows/macOS 宿主未验证，`provision-device.sh` 幂等但不承诺跨镜像一致。
 - **`cpuPct/memPct` 为尽力而为**：emulator/redroid/attach 各自采样（emulator `/proc`、redroid `docker stats`、attach `dumpsys`），取不到就省略字段，不阻断 status；不要当精确监控。
 - **`phone_screenshot` 的模型图片能力**：仅捕获 `attachments.saveImage` 失败并降级文本，未探测模型路由是否接受图片。
 - **一句话的候选路径/端口探测由操作 Agent 完成**：插件不扫盘，只提供 `/attach/verify` 与单键写入。
