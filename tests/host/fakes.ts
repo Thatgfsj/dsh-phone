@@ -54,6 +54,10 @@ export function makeService(overrides: Partial<PhoneOperations> = {}): FakeServi
       if (readiness instanceof Error) throw readiness
       return readiness
     },
+    start: () => call('start', makeStatus()),
+    stop: () => call('stop', makeStatus({ state: 'stopped' })),
+    restart: () => call('restart', makeStatus()),
+    isAlive: () => call('isAlive', true),
     screenshot: () => call('screenshot', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3])),
     tap: async (x, y) => {
       await call('tap:' + x + ',' + y, undefined)
