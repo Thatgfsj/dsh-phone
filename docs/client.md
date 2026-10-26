@@ -31,6 +31,7 @@ src/client/
   provision-flow.ts 准备状态机 + 1s 轮询器（纯逻辑，可注入 clock/timer，单测）
   provision-card.ts pending 一键卡与设置页入口组件（状态机 Hook + 自动启用）
   provision-views.ts 进度条/最近日志/手动命令的展示组件
+  action-api.ts  手机 UI 动作客户端（POST /action app-drawer）+ 409 专属文案映射（#101）
   runtime-api.ts 生命周期 API（GET/POST /runtime）+ 所有权/动作判定（#83）
   runtime-flow.ts RuntimePoller（动作 1s/空闲 3s）+ 停止/外部关闭 UI 判定（#83）
   runtime-controls.ts 生命周期 controller Hook（确认/动作/反馈/轮询）
@@ -371,6 +372,23 @@ UI 反映终止状态的时间 = 操作/终止时刻 → 面板出现 stopped/�
 
 单元测试覆盖：`tests/client/lifecycle-acceptance.test.ts`（外部 kill 视图/stopped 覆盖层、空闲 3s 轮询、owned vs adopted 文案与确认、busy 双页禁用、restart 1s 轮询、dispose/404 降级、文案齐全、动作完成/错误码映射）。
 
+### 4.6 应用抽屉快捷入口（issue #101）
+
+面板 footer 的设备按键区新增「应用」按钮（宫格图标 + 文字；窄屏图标化，title/aria 保留）。
+
+- 点击 → `POST /dsh-phone/api/action` body `{action:'app-drawer'}`，由 Host 转发 scrcpy 控制通道拉起桌面应用抽屉。
+- 成功：轻提示「已打开应用抽屉」（约 3s 自动消失）；请求期间按钮 `disabled`（busy 防重复点击）。
+- `409 E_APP_DRAWER_UNAVAILABLE` → 专属可读文案「当前实例未安装肥鱼桌面，请更新定制或运行 system/provision-device.sh」；其它错误显示 Host message。
+- Host 未实现 `/action`（404）：显示可读失败提示，不影响其余按键；错误不外抛。
+
+人工核对清单（真实 emulator，Host action API 合并后）：
+
+1. 已安装肥鱼桌面定制的实例：点「应用」→ 轻提示出现 → 手机画面出现应用抽屉 → 从抽屉启动「设置」成功。
+2. 未装定制（launcher 缺失）的实例：点「应用」→ 409 专属文案出现，含 `system/provision-device.sh` 指引。
+3. 快速连点：busy 期间按钮禁用，无重复请求（Host/日志仅一条动作）。
+4. 320px 窄栏：按钮仅图标、`title`/`aria-label` 可读；400/600px 图标+文字不换行/不竖排。
+5. 旧 Host（无 `/action`）或网络错误：显示可读失败文案，其它按键与视频流不受影响。
+
 ## 5. 首次使用引导（onboarding，issue #31）
 
 配合 Host 侧 onboarding 守卫（issue #30）。契约：
@@ -456,6 +474,7 @@ provisioning 状态解析/步骤映射/日志截断、pending→running→done/f
 停止轮询/409 依赖/自动启用判定/旧 Host 降级、POST body 与错误 envelope、
 生命周期：runtime 解析/所有权文案/动作可用性/外部关闭判定、动作 1s 与空闲 3s 轮询、stopped 空态优先级、错误码映射。
 另：lifecycle-acceptance 单测覆盖 stopped 覆盖层/外部 kill 轮询窗口/owned-adopted 确认文案/busy 双页禁用/dispose/404 降级/动作完成与 E_RESTART_FAILED·E_LIFECYCLE_BUSY 映射。
+应用抽屉：409 E_APP_DRAWER_UNAVAILABLE 专属文案与其它错误可读、按钮渲染/点击/aria/禁用/窄屏图标化/反馈 tone。
 
 ## 7. 未验证项（真实浏览器 / 真实 Host 待 task-8）
 1. WebCodecs 在 Chrome/Firefox/Safari 对 `avc.format='annexb'` + in-band SPS/PPS 的接受度；
@@ -481,3 +500,4 @@ provisioning 状态解析/步骤映射/日志截断、pending→running→done/f
 16. 「停止刷新」只停客户端轮询，契约没有 cancel 端点；后台 sdkmanager/avdmanager 可能继续执行（文案已说明）。
 17. 生命周期控制依赖 Host #83（`/dsh-phone/api/runtime`）；未合并时 UI 显示「不支持生命周期控制」+ 重新检测（已单测），kill -9/owned stop/adopted disconnect/重启/卸载语义需 #8 在合并后真机验收。
 18. §4.5 生命周期人工验收清单已落地；真实 emulator 的 kill -9/owned stop/adopted/重启/双页/卸载执行证据仍需在合并后的 Host 上采集（#8 或维护者）。
+19. 应用抽屉按钮依赖 Host `POST /action`（本 PR 建分支时 main 尚未包含该路由）；未合并时显示可读失败，真机「点击应用→抽屉出现→启动设置」需 Host 合并后按 §4.6 清单验收。

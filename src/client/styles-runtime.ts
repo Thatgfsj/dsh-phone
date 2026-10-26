@@ -13,5 +13,6 @@ export const RUNTIME_CSS = `
 .dshp-actions--center { justify-content: center; }
 .dshp-message { margin: 0; padding: 6px 10px; border-radius: 6px; background: var(--dsw-alias-bg-tertiary); color: var(--dsw-alias-text-secondary); }
 .dshp-message--error { color: var(--dsw-alias-text-danger); }
+.dshp-message--warn { color: var(--dsw-alias-text-warning); }
 .dshp-note { color: var(--dsw-alias-text-warning); }
 `

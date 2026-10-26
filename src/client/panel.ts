@@ -20,6 +20,8 @@ import { createFetchProvisionApi } from './provision-api.ts'
 import type { ProvisionApi } from './provision-api.ts'
 import { createFetchRuntimeApi } from './runtime-api.ts'
 import type { RuntimeApi } from './runtime-api.ts'
+import { createFetchActionApi } from './action-api.ts'
+import type { ActionApi } from './action-api.ts'
 
 export interface PanelDeps {
   React: typeof ReactNamespace
@@ -30,6 +32,8 @@ export interface PanelDeps {
   provisionApi?: ProvisionApi
   /** Injectable lifecycle API for tests/embedding. */
   runtimeApi?: RuntimeApi
+  /** Injectable phone-action API for tests/embedding. */
+  actionApi?: ActionApi
 }
 
 /** Build the panel body component for the current locale. */
@@ -37,7 +41,7 @@ export function createPhonePanel(deps: PanelDeps): ReactNamespace.ComponentType 
   const { React, t } = deps
   const h = React.createElement
   const api = deps.api ?? createFetchConfigApi()
-  const PhonePanelView = createPhonePanelView({ React, t, api, runtimeApi: deps.runtimeApi ?? createFetchRuntimeApi() })
+  const PhonePanelView = createPhonePanelView({ React, t, api, runtimeApi: deps.runtimeApi ?? createFetchRuntimeApi(), actionApi: deps.actionApi ?? createFetchActionApi() })
   const PanelEmptyState = createPanelEmptyState({ React, t, provisionApi: deps.provisionApi ?? createFetchProvisionApi() })
 
   function PhonePanel(): ReactNamespace.ReactElement {
