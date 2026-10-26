@@ -1,6 +1,6 @@
 {
   "name": "dsh-phone",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "这是大肥鱼的手机，主人不要动大肥鱼的手机喵",
   "type": "module",
   "main": "lib/index.js",

@@ -5,6 +5,12 @@
 > 真实设备链路另由 env-gated 脚本 scripts/verify/verify-emulator.mjs 覆盖（DSH_PHONE_E2E=1 才跑；默认 SKIP 不碰设备）。
 > 未测项一律显式 SKIP 并写明原因，**不允许假绿**；"人工待办"不是已通过。
 >
+> **v0.4.1（2026-10-27）发布状态**：#99 空白桌面应用抽屉（`DrawerActivity`：上滑 / 4 列网格 /
+> 搜索 / adb 固定命令）、#100 Host 动作 API（`POST /dsh-phone/api/action {action:'app-drawer'}`；
+> 409 `E_APP_DRAWER_UNAVAILABLE` / `E_LIFECYCLE_BUSY`）、#101 面板「应用」按钮（含 409 专属文案与 busy 防重复）。
+> 抽屉实测见 **§10**（空白首页 / 上滑打开 / adb 固定命令 / 从抽屉启动「设置」/ 返回 HOME 仍空白，均 PASS）；
+> 客户端按钮人工核对清单见 [client.md](client.md) §4.6。
+>
 > **v0.4.0（2026-10-27）发布状态**：#83 生命周期控制三端已合并（API #84 / UI #85 / runtime #86 /
 > 收口修复 #90），单测覆盖 2s 看门狗、owned/adopted 所有权语义、restart 序列、并发动作与 dispose 5s 预算
 > （§9.2）；#87 肥鱼手机定制已在真实 emulator 实机验证 **1080x2400 / zh-CN / 空白首页 / 壁纸 111-222 轮换 /

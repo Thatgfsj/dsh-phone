@@ -5,6 +5,48 @@
 
 ## [Unreleased]
 
+## [v0.4.1] - 2026-10-27
+
+第六次发布：**空白桌面应用抽屉** + **面板「应用」按钮**（纯 app 与 Host/客户端小改，不动系统镜像）。
+
+### Added
+
+- **空白桌面应用抽屉**（[#99](https://github.com/Thatgfsj/dsh-phone/issues/99)/
+  [#104](https://github.com/Thatgfsj/dsh-phone/pull/104)）：`system/feiyu-shell` 新增 `DrawerActivity`——
+  首页**仍保持空白**（无图标/widget），**从屏幕底部上滑**打开 4 列应用抽屉（PackageManager 的
+  MAIN/LAUNCHER：图标 + 中文名、可滚动、深色半透明、顶部搜索框按名称过滤）；点击图标启动应用，
+  返回键回到空白首页；提供固定 adb 契约
+  `am start -n com.dafeiyu.shell/.DrawerActivity --activity-single-top` 供 Host 调用。
+  APK versionCode=2 / versionName=1.1（561KB）。
+- **面板动作 API**（[#100](https://github.com/Thatgfsj/dsh-phone/issues/100)/
+  [#105](https://github.com/Thatgfsj/dsh-phone/pull/105)）：`POST /dsh-phone/api/action` body
+  `{action:'app-drawer'}`——只允许**预定义动作 + 固定命令**（不做任意命令拼接），经 scrcpy 控制通道执行；
+  不可用返回 **409 `E_APP_DRAWER_UNAVAILABLE`**，生命周期动作进行中返回 **409 `E_LIFECYCLE_BUSY`**。
+- **面板底部「应用」按钮**（[#101](https://github.com/Thatgfsj/dsh-phone/issues/101)/
+  [#103](https://github.com/Thatgfsj/dsh-phone/pull/103)）：宽屏图标 + 文字、窄屏仅图标（`title`/`aria` 保留）；
+  点击后轻提示「已打开应用抽屉」；请求期间按钮 busy 防重复；409 时给专属可读文案（提示更新定制或运行
+  `system/provision-device.sh`）；Host 未实现 `/action` 时也只显示失败提示，不影响其余按键。
+
+### Changed
+
+- **README 用户修改并入**（[#102](https://github.com/Thatgfsj/dsh-phone/pull/102)）：版本状态段按用户口径
+  精简（不再强调「无 YouTube」）；本次同时补「上滑打开应用抽屉」与面板「应用」按钮说明。
+- **文档**：`docs/usage.md` 新增 §2.3（应用抽屉的两种入口与错误文案）；`docs/verification.md` §10 记录
+  #99 抽屉实测（空白首页 / 上滑打开 / adb 固定命令 / 从抽屉启动「设置」/ 返回 HOME 仍空白，均 PASS）；
+  README 与 `docs/install.md` 的版本与 tgz 名同步 0.4.1。
+- 版本号 `0.4.0` → `0.4.1`（[#106](https://github.com/Thatgfsj/dsh-phone/issues/106)）。
+
+### 已知限制与未验证项
+
+- **沿用 v0.4.0**：[#72](https://github.com/Thatgfsj/dsh-phone/issues/72)（phone_key 白名单/screenshot 掩码/
+  booting 断连/control 单飞）未完成；#40 剩余真实浏览器/redroid/审批 UI 人工待办；冷启动 33–95s 有客观下限；
+  `aosp_atd` 未实测；npm 包名冲突未改名。
+- **应用抽屉依赖定制 app**：未安装 `system/feiyu-shell`（或用户自己换了 launcher）的实例上 `/action`
+  返回 409、面板显示专属提示——这是预期行为，不是缺陷。
+- **抽屉搜索框未做自动化输入验证**；抽屉内应用列表取决于设备已安装的 MAIN/LAUNCHER 应用（当前验证设备
+  只剩「设置 / TMobile」）。
+- 应用抽屉由 app 自身绘制，Host 只发固定 adb 命令、不解析界面；`/action` 不接受任意命令/参数。
+
 ## [v0.4.0] - 2026-10-27
 
 第五次发布：**生命周期控制**（启动 / 停止 / 重启 + 外部 kill 兜底）与 **肥鱼手机定制**（一键把实例变成「大肥鱼的手机」）。

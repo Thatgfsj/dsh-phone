@@ -117,6 +117,26 @@ nc -z 127.0.0.1 5555     # Windows: Test-NetConnection 127.0.0.1 -Port 5555
 - 想恢复原生桌面/其他语言：新建 AVD 或重装 system image，不走 `system/` 定制即可；
   来源、许可与手动步骤见 [../system/README.md](../system/README.md)。
 
+### 2.3 应用抽屉（issue #99 / #101）
+
+空白桌面上有两条打开应用抽屉的路：
+
+1. **手机画面内上滑**：从屏幕底部向上滑（swipe up / fling），抽屉以深色半透明盖在首页上，4 列网格列出
+   MAIN/LAUNCHER 应用（图标 + 中文名、可滚动），顶部搜索框可按名称过滤；点图标启动应用，返回键回空白首页。
+2. **面板底部「应用」按钮**：一键走 `POST /dsh-phone/api/action` body `{action:'app-drawer'}`，由 Host 发
+   固定的 adb 命令打开抽屉（只允许预定义动作 + 固定命令，不拼接任意命令）。请求期间按钮禁用，成功轻提示
+   「已打开应用抽屉」。
+
+常见失败与处理：
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 「当前实例未安装肥鱼桌面…」（409 `E_APP_DRAWER_UNAVAILABLE`） | 实例没装定制 app，或被换了 launcher | 重新应用定制：`system/provision-device.sh`（或重新一键准备） |
+| 409 `E_LIFECYCLE_BUSY` | 正在启动/停止/重启 | 等生命周期动作完成后再点 |
+| 其它错误 | Host 未实现 `/action`（旧版本）或设备侧异常 | 按提示文案处理；不影响其它按键与工具 |
+
+> Agent 侧没有「打开抽屉」工具：抽屉是给人看的 UI；Agent 需要操作某个应用时用 `phone_app_launch(pkg)`。
+
 ## 3. 日常操作 SOP（对应 SPEC §5.1）
 
 ```
