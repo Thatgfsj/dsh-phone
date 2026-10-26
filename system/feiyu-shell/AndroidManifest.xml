@@ -2,8 +2,8 @@
 <!-- 肥鱼手机空白桌面（com.dafeiyu.shell）。见 system/README.md 来源与许可（MIT）。 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.dafeiyu.shell"
-    android:versionCode="1"
-    android:versionName="1.0">
+    android:versionCode="2"
+    android:versionName="1.1">
 
     <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="34" />
 
@@ -35,6 +35,13 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".DrawerActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
 
         <receiver
             android:name=".BootReceiver"

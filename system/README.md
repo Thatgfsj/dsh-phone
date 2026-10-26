@@ -48,6 +48,15 @@ com.google.android.apps.nexuslauncher`）→ `pm uninstall --user 0 com.google.a
 校验 locale/包/默认 HOME/wm size → 截图到 `/tmp/feiyu-*.png`。
 **会重启设备**（issue #87 已获用户批准）；执行前确认没有其他人在用该实例。
 
+## 应用抽屉（issue #99）
+
+首页保持空白（无图标/widget）。**从屏幕底部上滑**（swipe up / fling）打开应用抽屉：
+
+- 4 列网格：PackageManager 的 MAIN/LAUNCHER 应用（排除肥鱼桌面自身），图标 + 中文名称，可滚动；
+- 点击图标启动应用；抽屉为深色半透明；顶部搜索框可按名称过滤；
+- 返回键关闭抽屉回到空白首页；没有可启动应用时显示「没有可启动的应用」；
+- adb 验证：`adb shell input swipe 540 2000 540 800 300`（1080x2400 屏）→ 截图；`uiautomator dump` 可读控件文本。
+
 ## 壁纸切换（app 内 / adb 广播）
 
 - 默认开机后由 BootReceiver 设置壁纸，之后**每 10 分钟**自动切换一次（可通过广播改/关）；
