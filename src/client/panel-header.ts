@@ -18,6 +18,8 @@ export interface PanelHeaderProps {
   kind: DecoderKind | 'pending'
   boot?: BootProgress
   meta?: { width: number; height: number; codec: string; maxFps: number }
+  /** Lifecycle buttons (restart/stop) rendered by the runtime controller. */
+  runtimeActions?: ReactNamespace.ReactElement | null
   /** Manual reconnect (also used by the error overlay). */
   onReconnect: () => void
   reconnectDisabled: boolean
@@ -76,7 +78,7 @@ export function createPanelHeader(deps: PanelHeaderDeps): ReactNamespace.Compone
   const h = React.createElement
 
   function PanelHeader(props: PanelHeaderProps): ReactNamespace.ReactElement {
-    const { layout, status, kind, boot, meta, onReconnect, reconnectDisabled } = props
+    const { layout, status, kind, boot, meta, runtimeActions, onReconnect, reconnectDisabled } = props
     const showLabels = layout.size !== 'compact'
     const summary = boot === undefined ? undefined : summarizeBoot(boot)
     const decoderLabel =
@@ -100,6 +102,7 @@ export function createPanelHeader(deps: PanelHeaderDeps): ReactNamespace.Compone
         h(
           'div',
           { className: 'dshp-header-actions' },
+          runtimeActions ?? null,
           h(
             'button',
             {

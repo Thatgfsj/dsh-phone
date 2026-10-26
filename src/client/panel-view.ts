@@ -28,22 +28,27 @@ import { StreamClient } from './stream.ts'
 import type { StreamState } from './stream.ts'
 import { mapKeyboardKey, mapPointerToDevice } from './input.ts'
 import type { ConfigApi } from './settings-api.ts'
+import type { RuntimeApi } from './runtime-api.ts'
+import { createRuntimeControls } from './runtime-controls.ts'
 
 export interface PanelViewDeps {
   React: typeof ReactNamespace
   t: Translate
   api: ConfigApi
+  runtimeApi: RuntimeApi
 }
 
 /** Build the panel body component for the current locale. */
 export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.ComponentType {
-  const { React, t, api } = deps
+  const { React, t, api, runtimeApi } = deps
   const h = React.createElement
   const PanelHeader = createPanelHeader({ React, t })
   const PanelStage = createPanelStage({ React, t })
   const PanelFooter = createPanelFooter({ React, t })
+  const runtimeControls = createRuntimeControls({ React, t, api: runtimeApi })
 
   function PhonePanel(): ReactNamespace.ReactElement {
+    const runtime = runtimeControls.useRuntime()
     const rootRef = React.useRef<HTMLDivElement | null>(null)
     const stageRef = React.useRef<HTMLDivElement | null>(null)
     const canvasRef = React.useRef<HTMLCanvasElement | null>(null)
@@ -227,11 +232,15 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
         kind,
         boot,
         meta,
+        runtimeActions: h(runtimeControls.HeaderActions, { runtime }),
         onReconnect: reconnect,
         reconnectDisabled: status === 'hidden',
       }),
+      h(runtimeControls.MessageBar, { runtime }),
       h(PanelStage, {
         status,
+        runtimeStopped: runtime.stopped,
+        stoppedOverlay: h(runtimeControls.StoppedOverlay, { runtime }),
         boot,
         error,
         onRetry: reconnect,

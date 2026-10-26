@@ -17,6 +17,10 @@ export interface PanelStageProps {
   status: StreamState
   boot?: BootProgress
   error?: string
+  /** Host runtime is stopped: show the stopped/start overlay. */
+  runtimeStopped?: boolean
+  /** Optional custom stopped overlay (runtime controller); falls back to text. */
+  stoppedOverlay?: ReactNamespace.ReactElement | null
   onRetry: () => void
   stageRef: ReactNamespace.RefObject<HTMLDivElement | null>
   canvasRef: ReactNamespace.RefObject<HTMLCanvasElement | null>
@@ -42,8 +46,8 @@ export function createPanelStage(deps: PanelStageDeps): ReactNamespace.Component
   const h = React.createElement
 
   function PanelStage(props: PanelStageProps): ReactNamespace.ReactElement {
-    const { status, boot, error, onRetry } = props
-    const view: StageView = describeStageView({ status, booting: boot !== undefined, error })
+    const { status, boot, error, runtimeStopped, stoppedOverlay, onRetry } = props
+    const view: StageView = describeStageView({ status, booting: boot !== undefined, error, runtimeStopped })
     const summary = boot === undefined ? undefined : summarizeBoot(boot)
 
     return h(
@@ -65,13 +69,11 @@ export function createPanelStage(deps: PanelStageDeps): ReactNamespace.Component
         : h(
             'div',
             { className: 'dshp-overlay', 'data-view': view },
-            view === 'error'
-              ? h(
-                  'div',
-                  { className: 'dshp-text dshp-error' },
-                  error ?? t('panel.error.fatal'),
-                )
-              : spinner(h),
+            view === 'stopped'
+              ? stoppedOverlay ?? h('div', { className: 'dshp-text' }, t('runtime.stopped.title'))
+              : view === 'error'
+                ? h('div', { className: 'dshp-text dshp-error' }, error ?? t('panel.error.fatal'))
+                : spinner(h),
             view === 'booting'
               ? h(
                   'div',
