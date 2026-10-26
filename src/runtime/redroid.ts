@@ -162,6 +162,8 @@ export class RedroidRuntime implements RuntimeAdapter {
       kind: 'redroid',
       running: info?.status === 'running',
       paused: info?.status === 'paused',
+      owned: true,
+      adopted: false,
       endpoint: this.#endpoint,
       since: this.#since,
       containerId: info?.id,
@@ -172,6 +174,12 @@ export class RedroidRuntime implements RuntimeAdapter {
       if (usage.memPct !== undefined) status.memPct = usage.memPct
     }
     return status
+  }
+
+  /** 看门狗用（issue #83）：容器 running 视为存活（owned）。 */
+  async isAlive(): Promise<boolean> {
+    const info = await this.#inspect().catch(() => undefined)
+    return info?.status === 'running' || info?.status === 'paused'
   }
 
   /** 尽力而为：docker stats 取不到就省略字段（issue #56）。 */

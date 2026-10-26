@@ -15,6 +15,7 @@ import type {
   StreamSessionOptions,
 } from '../../src/phone/service.ts'
 import { PhoneService } from '../../src/phone/service.ts'
+import type { RuntimeStatus } from '../../src/runtime/types.ts'
 
 function makeConfig(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
   return {
@@ -30,6 +31,8 @@ interface FakeLifecycle extends LifecycleLike {
   hooks: LifecycleHooksLike
   ensureCalls: number
   touchCalls: number
+  halt(reason?: string): void
+  stopNow(reason?: string): Promise<void>
   boot(): Promise<void>
   fail(error: Error): void
   emit(state: LifecycleStatusLike['state'], bootMs?: number): void
@@ -102,6 +105,15 @@ function makeLifecycle(initial: LifecycleStatusLike['state'] = 'stopped', manual
       booted = false
       status = { state: 'stopped', since: 0, lastError: reason }
     },
+    halt(reason) {
+      booted = false
+      status = { state: 'stopped', since: 0, lastError: reason }
+    },
+    async stopNow(reason) {
+      try { await lifecycle.hooks.stop() } catch { /* ignore */ }
+      booted = false
+      status = { state: 'stopped', since: 0, lastError: reason }
+    },
     onChange(listener) {
       listeners.add(listener)
       return () => listeners.delete(listener)
@@ -128,7 +140,7 @@ interface Harness {
     pauseCalls: number
     resumeCalls: number
     stopCalls: number
-    status: { kind: 'attach'; running: boolean; paused: boolean; endpoint: { host: string; port: number } }
+    status: { kind: 'attach'; running: boolean; paused: boolean; owned: boolean; adopted: boolean; endpoint: { host: string; port: number } }
   }
   closeCount: number
   schedule: { callback?: () => void; ms?: number }[]
@@ -166,7 +178,7 @@ function makeService(
       pauseCalls: 0,
       resumeCalls: 0,
       stopCalls: 0,
-      status: { kind: 'attach', running: true, paused: false, endpoint: { host: '127.0.0.1', port: 5555 } },
+      status: { kind: 'attach', running: true, paused: false, owned: false, adopted: true, endpoint: { host: '127.0.0.1', port: 5555 } },
     },
   }
 
@@ -207,6 +219,7 @@ function makeService(
           harness.adapter.stopCalls += 1
         },
         status: async () => harness.adapter.status,
+        isAlive: async () => harness.adapter.status.running,
       },
       detection: { kind: 'attach', platform: 'linux' },
     }),
@@ -413,7 +426,7 @@ function makeHandle(
   kind: 'attach' | 'emulator' | 'redroid',
   options: {
     ensureRunning?: () => Promise<{ host: string; port: number }>
-    status?: () => Promise<{ kind: 'attach' | 'emulator' | 'redroid'; running: boolean; paused: boolean; endpoint?: { host: string; port: number } }>
+    status?: () => Promise<RuntimeStatus>
   } = {},
 ): RuntimeHandle {
   const endpoint = { host: '127.0.0.1', port: 5555 }
@@ -427,7 +440,8 @@ function makeHandle(
       stop: async () => {},
       status:
         options.status ??
-        (async () => ({ kind, running: true, paused: false, endpoint })),
+        (async () => ({ kind, running: true, paused: false, owned: false, adopted: true, endpoint })),
+      isAlive: async () => true,
     },
     detection: { kind, platform: 'linux' },
   }
@@ -540,6 +554,8 @@ test('adapter 不可用（未运行/未 paused 且 stopped）→ handle 失效�
           kind: 'attach',
           running: false,
           paused: false,
+          owned: false,
+          adopted: true,
           endpoint: { host: '127.0.0.1', port: 5555 },
         }),
       })
@@ -631,8 +647,11 @@ function makeEndpointHarness(options: {
         kind: 'attach',
         running: true,
         paused: false,
+        owned: false,
+        adopted: true,
         endpoint: endpointOf(config.attach.endpoint),
       }),
+      isAlive: async () => true,
     },
     detection: { kind: 'attach', platform: 'linux' },
   }

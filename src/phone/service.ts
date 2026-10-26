@@ -12,6 +12,7 @@
  */
 import { AdbError } from '../adb/types.ts'
 import type { OnboardingChoice, OnboardingStatus } from '../config/onboarding.ts'
+import { RuntimeError } from '../runtime/types.ts'
 import type {
   BootPhase,
   Endpoint,
@@ -19,6 +20,7 @@ import type {
   ProcessUsage,
   RuntimeAdapter,
   RuntimeKind,
+  RuntimeStatus,
 } from '../runtime/types.ts'
 import {
   DEFAULT_BOOT_TIMEOUT_MS,
@@ -26,11 +28,13 @@ import {
   bootRetryExhaustedMessage,
   isRetryableBootError,
 } from './boot-retry.ts'
+import { withTimeout } from '../adb/timing.ts'
 import type {
   InteractiveReadiness,
   PhoneOperations,
   PhoneStatus,
   Platform,
+  StopOptions,
   VerifyResult,
 } from './contracts.ts'
 import {
@@ -39,118 +43,39 @@ import {
   usageFromAttachOutputs,
 } from './usage.ts'
 
-export interface ServiceConfig {
-  /** 生效运行时（已叠加 onboarding.choice；wiring.readServiceConfig）。 */
-  runtime: 'auto' | RuntimeKind
-  /** onboarding 原始状态：用于配置变化时使探测缓存失效（issue #36）。 */
-  onboarding?: { status: OnboardingStatus; choice: OnboardingChoice }
-  attach: { endpoint: string; userHint: string; resolved: boolean }
-  stream: { maxSize: number; maxFps: number; bitrate: number }
-  lifecycle: { idleTimeoutMs: number; pausedTimeoutMs: number }
-}
+import type {
+  AdbConnectionLike,
+  CreateLifecycle,
+  DeviceOps,
+  LifecycleHooksLike,
+  LifecycleLike,
+  LifecycleStatusLike,
+  PhoneServiceDeps,
+  RuntimeHandle,
+  ServiceConfig,
+  StartStreamSession,
+  StreamSession,
+  StreamSessionOptions,
+  StreamSink,
+} from './service-types.ts'
 
-/** runtime 适配器 + 决策树结果（detect.ts / resolveRuntime 的窄化）。 */
-export interface RuntimeHandle {
-  adapter: RuntimeAdapter
-  detection: { kind: RuntimeKind; platform: Platform }
-}
+export type {
+  AdbConnectionLike,
+  CreateLifecycle,
+  DeviceOps,
+  LifecycleHooksLike,
+  LifecycleLike,
+  LifecycleStatusLike,
+  PhoneServiceDeps,
+  RuntimeHandle,
+  ServiceConfig,
+  StartStreamSession,
+  StreamSession,
+  StreamSessionOptions,
+  StreamSink,
+} from './service-types.ts'
 
-export interface AdbConnectionLike {
-  readonly raw: unknown
-  readonly disconnected: Promise<void>
-  close(): Promise<void>
-}
-
-/** adb/device 设备语义（src/adb/device.ts 的窄化，测试可注入假实现）。 */
-export interface DeviceOps {
-  screenshot(): Promise<Uint8Array>
-  tap(x: number, y: number): Promise<void>
-  swipe(x1: number, y1: number, x2: number, y2: number, durationMs: number): Promise<void>
-  key(name: string): Promise<void>
-  appLaunch(pkg: string): Promise<void>
-  dumpUi(): Promise<string>
-  shell(command: string): Promise<string>
-}
-
-export interface StreamSink {
-  video(chunk: Uint8Array, meta?: { keyframe?: boolean; pts?: bigint }): void
-  error(error: Error): void
-}
-
-export interface StreamSessionOptions {
-  /** 必须是 AdbConnection 本身（stream 层内部读 adb.raw）；禁止传 Tango Adb/.raw（issue #59）。 */
-  adb: AdbConnectionLike
-  video: boolean
-  sink?: StreamSink
-  config: { maxSize: number; maxFps: number; bitrate: number }
-}
-
-export interface StreamSession {
-  readonly ready?: Promise<{ width: number; height: number; codec: string }>
-  injectText(text: string): Promise<void>
-  injectTouch(action: 'down' | 'move' | 'up', x: number, y: number): Promise<void>
-  injectKey(name: string): Promise<void>
-  close(): Promise<void>
-}
-
-export type StartStreamSession = (options: StreamSessionOptions) => Promise<StreamSession>
-
-/** 生命周期状态（runtime PhoneLifecycle 的窄化）。 */
-export interface LifecycleStatusLike {
-  state: PhoneState
-  since: number
-  bootMs?: number
-  lastError?: string
-}
-
-export interface LifecycleHooksLike {
-  start(): Promise<void>
-  pause(): Promise<void>
-  resume(): Promise<void>
-  stop(): Promise<void>
-  onError?(error: Error, phase: 'start' | 'resume' | 'pause' | 'stop'): void
-}
-
-export interface LifecycleLike {
-  readonly state: PhoneState
-  readonly status: LifecycleStatusLike
-  ensureRunning(): Promise<void>
-  touch(options?: { wake?: boolean }): void
-  notifyDisconnected(reason?: string): void
-  onChange(listener: (status: LifecycleStatusLike) => void): () => void
-  dispose(): Promise<void>
-}
-
-export type CreateLifecycle = (
-  hooks: LifecycleHooksLike,
-  timings: { idleTimeoutMs: number; pausedTimeoutMs: number; bootTimeoutMs: number },
-) => LifecycleLike
-
-export interface PhoneServiceDeps {
-  config(): ServiceConfig
-  resolveRuntime(): Promise<RuntimeHandle>
-  platform(): Promise<Platform>
-  connect(endpoint: Endpoint, options?: { timeoutMs?: number }): Promise<AdbConnectionLike>
-  disconnect(connection: AdbConnectionLike): Promise<void>
-  createDevice(connection: AdbConnectionLike): DeviceOps
-  startStream(options: StreamSessionOptions): Promise<StreamSession>
-  createLifecycle: CreateLifecycle
-  /** 流关闭宽限期（默认 5000ms；测试注入立即执行）。 */
-  schedule?(callback: () => void, delayMs: number): () => void
-  /** 可注入时钟（单测验证 30s 防抖；默认 Date.now）。 */
-  now?(): number
-  /** 注入 sleep（单测缩短冷启动重试等待；默认 setTimeout）。 */
-  sleep?(delayMs: number): Promise<void>
-  /** 注入 boot 重试延迟序列（默认 bootRetryDelays(DEFAULT_BOOT_TIMEOUT_MS - 20s)）。 */
-  bootRetryDelays?(): number[]
-  /**
-   * ADB 连通后是否继续等系统真正可用（issue #67：sys.boot_completed=1 且 package manager
-   * ready）。默认关闭以保持既有单测/attach 行为；wiring 生产装配开启。
-   */
-  waitBootCompleted?: boolean
-  /** waitBootCompleted 的超时（默认 90s）。 */
-  bootReadyTimeoutMs?: number
-}
+type ActionName = 'start' | 'stop' | 'restart'
 
 const DEFAULT_STREAM_GRACE_MS = 5_000
 /** viewer 存活期间的心跳（issue #73）：周期性 touch，idle 不应在有人观看时休眠。 */
@@ -163,36 +88,14 @@ const USAGE_CACHE_MS = 5_000
  */
 const BOOT_RETRY_BUDGET_MS = DEFAULT_BOOT_TIMEOUT_MS - 20_000
 
-/**
- * 探测失败后的最短重探间隔（issue #36）：失败**不永久缓存**，但 30s 内不重复探测，
- * 避免面板/status 轮询打爆决策树（docker/emulator 探测含磁盘与端口检查）。
- */
-export const RUNTIME_PROBE_RETRY_MS = 30_000
+import {
+  RUNTIME_PROBE_RETRY_MS,
+  parseEndpoint,
+  runtimeConfigFingerprint,
+  toError,
+} from './service-helpers.ts'
 
-/** 运行时探测缓存指纹：runtime 配置 + onboarding.status/choice 任一变化即失效。 */
-export function runtimeConfigFingerprint(config: ServiceConfig): string {
-  const onboarding = config.onboarding
-  // issue #70：attach.endpoint/resolved 变化必须使 adapter+ADB 缓存失效（否则写新端点不生效）
-  return [
-    config.runtime,
-    onboarding?.status ?? '',
-    onboarding?.choice ?? '',
-    config.attach.endpoint,
-    config.attach.resolved ? '1' : '0',
-  ].join('|')
-}
-
-function parseEndpoint(value: string): Endpoint | undefined {
-  const match = /^([A-Za-z0-9._:[\]-]+):(\d{1,5})$/.exec(value.trim())
-  if (!match) return undefined
-  const port = Number(match[2])
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) return undefined
-  return { host: match[1] as string, port }
-}
-
-function toError(value: unknown): Error {
-  return value instanceof Error ? value : new Error(String(value))
-}
+export { RUNTIME_PROBE_RETRY_MS, runtimeConfigFingerprint } from './service-helpers.ts'
 
 export class PhoneService implements PhoneOperations {
   readonly #deps: PhoneServiceDeps
@@ -223,6 +126,13 @@ export class PhoneService implements PhoneOperations {
   /** attach 资源占用采样缓存（issue #56）。 */
   #usage: ProcessUsage | undefined
   #usageAt = 0
+  /** issue #83：看门狗与动作用状态。 */
+  #watchdogStop: (() => void) | undefined
+  #lastRuntimeStatus: RuntimeStatus | undefined
+  #actionQueue: Promise<unknown> = Promise.resolve()
+  #actionInflight: { action: ActionName; promise: Promise<PhoneStatus> } | undefined
+  #actionToken = 0
+  #disposing = false
 
   constructor(deps: PhoneServiceDeps) {
     this.#deps = deps
@@ -243,7 +153,10 @@ export class PhoneService implements PhoneOperations {
         bootTimeoutMs: DEFAULT_BOOT_TIMEOUT_MS,
       },
     )
-    this.#lifecycle.onChange((status) => this.#emit(status))
+    this.#lifecycle.onChange((status) => {
+      this.#emit(status)
+      this.#syncWatchdog(status.state)
+    })
     void deps.platform().then(
       (platform) => {
         this.#platform = platform
@@ -257,6 +170,7 @@ export class PhoneService implements PhoneOperations {
   async status(): Promise<PhoneStatus> {
     const handle = await this.#runtime()
     const runtimeStatus = await handle.adapter.status().catch(() => undefined)
+    this.#lastRuntimeStatus = runtimeStatus
     this.#invalidateIfAdapterUnavailable(handle, runtimeStatus)
     const config = this.#deps.config()
     const lifecycle = this.#lifecycle.status
@@ -269,6 +183,11 @@ export class PhoneService implements PhoneOperations {
       platform: handle.detection.platform,
     }
     if (endpoint) status.endpoint = endpoint
+    if (runtimeStatus) {
+      status.owned = runtimeStatus.owned
+      status.adopted = runtimeStatus.adopted
+      if (runtimeStatus.pid !== undefined) status.pid = runtimeStatus.pid
+    }
     if (lifecycle.bootMs !== undefined) status.bootMs = lifecycle.bootMs
     // issue #56：booting 时给出进度阶段（可选字段，客户端可忽略）
     if (lifecycle.state === 'booting' && this.#bootPhase !== undefined) {
@@ -320,6 +239,35 @@ export class PhoneService implements PhoneOperations {
     }
     await this.ensureRunning()
     return { state: 'running' }
+  }
+
+  /** issue #83：显式启动（幂等；返回最终状态）。 */
+  async start(): Promise<PhoneStatus> {
+    return this.#runAction('start', async () => {
+      await this.ensureRunning()
+      return this.status()
+    })
+  }
+
+  /** issue #83：停止（owned 保存快照等退出；adopted 只断开，不杀用户实例）。 */
+  async stop(options: StopOptions = {}): Promise<PhoneStatus> {
+    return this.#runAction('stop', async () => this.#doStop(options))
+  }
+
+  /** issue #83：重启（先停后启；返回最终状态）。 */
+  async restart(): Promise<PhoneStatus> {
+    return this.#runAction('restart', async () => {
+      await this.#doStop({ force: true })
+      await this.ensureRunning()
+      return this.status()
+    })
+  }
+
+  /** issue #83：实例是否还活着（看门狗/健康检查）。 */
+  async isAlive(): Promise<boolean> {
+    const handle = await this.#runtime().catch(() => undefined)
+    if (!handle) return false
+    return handle.adapter.isAlive().catch(() => false)
   }
 
   onStateChange(listener: (status: PhoneStatus) => void): () => void {
@@ -457,16 +405,39 @@ export class PhoneService implements PhoneOperations {
     }
   }
 
+  /**
+   * issue #83：卸载必须“关得掉”。总预算默认 5s（可注入），任何一步（status/stop/
+   * 流关闭/lifecycle.dispose 等 inflight）都不得无限等待；owned 先尝试 stop（保存快照），
+   * adopted 只断开。超预算放弃等待并完成卸载。
+   */
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
+    this.#disposing = true
+    this.#stopWatchdog()
     this.#cancelClose()
     this.#stopViewerHeartbeat()
-    await this.#stream?.close().catch(() => undefined)
-    await this.#control?.close().catch(() => undefined)
-    await this.#disconnectAdb()
-    await this.#lifecycle.dispose()
+    const budget = this.#deps.disposeBudgetMs ?? 5000
+    const deadline = this.#now() + budget
+    const remaining = (): number => Math.max(1, deadline - this.#now())
+    const within = async (work: Promise<unknown>): Promise<unknown> =>
+      Promise.race([work.catch(() => undefined), this.#delay(remaining())])
+    const status = (await within(
+      Promise.race([this.#adapterStatus(), this.#delay(Math.min(1000, remaining()))]),
+    )) as RuntimeStatus | undefined
+    if (status?.owned === true) {
+      // owned：先尝试 stop（保存快照），但只在总预算内等
+      await within(this.#lifecycle.stopNow('插件卸载：已停止手机实例'))
+    } else {
+      await within(this.#closeSessions())
+      await within(this.#disconnectAdb())
+    }
+    await within(this.#closeSessions())
+    await within(this.#disconnectAdb())
+    await within(this.#lifecycle.dispose())
+    this.#stopWatchdog()
     this.#listeners.clear()
+    this.#disposing = false
   }
 
   /* ---------------------------------- 生命周期钩子 --------------------------------- */
@@ -546,7 +517,7 @@ export class PhoneService implements PhoneOperations {
         lastError = toError(error)
         const delay = delays[attempt]
         if (delay === undefined) {
-          throw this.#bootConnectError(delays.length + 1, delays, lastError)
+          throw this.#bootConnectError(delays.length + 1, delays, lastError ?? toError(error))
         }
         if (!isRetryableBootError(lastError)) throw lastError
         await this.#sleep(delay)
@@ -870,6 +841,12 @@ export class PhoneService implements PhoneOperations {
     if (lifecycle.state === 'booting' && this.#bootPhase !== undefined) {
       status.phase = this.#bootPhase
     }
+    const runtimeStatus = this.#lastRuntimeStatus
+    if (runtimeStatus) {
+      status.owned = runtimeStatus.owned
+      status.adopted = runtimeStatus.adopted
+      if (runtimeStatus.pid !== undefined) status.pid = runtimeStatus.pid
+    }
     if (lifecycle.lastError) status.lastError = lifecycle.lastError
     for (const listener of this.#listeners) {
       try {
@@ -919,6 +896,147 @@ export class PhoneService implements PhoneOperations {
     } catch {
       return {}
     }
+  }
+
+  /* ------------------------------- #83 动作与看门狗 ------------------------------- */
+
+  #runAction(action: ActionName, work: () => Promise<PhoneStatus>): Promise<PhoneStatus> {
+    this.#assertAlive()
+    const inflight = this.#actionInflight
+    if (inflight) {
+      if (inflight.action === action) return inflight.promise
+      const chained = inflight.promise
+        .catch(() => undefined)
+        .then(() => this.#executeAction(action, work))
+      this.#actionInflight = { action, promise: chained }
+      return chained
+    }
+    const promise = this.#executeAction(action, work)
+    this.#actionInflight = { action, promise }
+    return promise
+  }
+
+  #executeAction(action: ActionName, work: () => Promise<PhoneStatus>): Promise<PhoneStatus> {
+    const token = ++this.#actionToken
+    const previous = this.#actionQueue
+    const run = previous.catch(() => undefined).then(work)
+    this.#actionQueue = run.catch(() => undefined)
+    const timeoutMs = this.#deps.actionTimeoutMs ?? 180_000
+    const timed = withTimeout(
+      run,
+      timeoutMs,
+      () =>
+        new RuntimeError(
+          '动作 ' + action + ' 超时（' + timeoutMs + 'ms）',
+          action === 'stop' ? 'stop' : 'start',
+        ),
+    ).finally(() => {
+      if (this.#actionToken === token) this.#actionInflight = undefined
+    })
+    return timed
+  }
+
+  async #adapterStatus(): Promise<RuntimeStatus | undefined> {
+    const handle = await this.#runtime().catch(() => undefined)
+    if (!handle) return undefined
+    const status = await handle.adapter.status().catch(() => undefined)
+    if (status) this.#lastRuntimeStatus = status
+    return status
+  }
+
+  /**
+   * 停止（issue #83）：
+   * - booting：cancelStart 打断启动，立即落 stopped（不泄漏进程）；
+   * - adopted：只断开 ADB/流，不杀用户实例，lastError 提示；
+   * - owned：lifecycle.stopNow() → hooks.stop（adapter.stop 保存快照并等退出）。
+   */
+  async #doStop(options: StopOptions): Promise<PhoneStatus> {
+    if (this.#lifecycle.state === 'stopped') return this.status()
+    const runtimeStatus = await this.#adapterStatus()
+    const owned = runtimeStatus?.owned ?? runtimeStatus?.adopted !== true
+    if (this.#lifecycle.state === 'booting') {
+      const handle = this.#handle
+      await withTimeout(
+        handle?.adapter.cancelStart?.() ?? Promise.resolve(),
+        15_000,
+        () => new RuntimeError('取消启动超时', 'stop'),
+      ).catch(() => undefined)
+      await this.#closeSessions().catch(() => undefined)
+      await this.#disconnectAdb().catch(() => undefined)
+      this.#lifecycle.halt(options.force === true ? '已停止' : '已停止（启动被取消）')
+      this.#emitStatus()
+      return this.status()
+    }
+    if (!owned) {
+      await this.#closeSessions().catch(() => undefined)
+      await this.#disconnectAdb().catch(() => undefined)
+      this.#lifecycle.halt('已断开连接（实例由用户启动，未关闭）')
+      this.#emitStatus()
+      return this.status()
+    }
+    await this.#lifecycle.stopNow()
+    this.#emitStatus()
+    return this.status()
+  }
+
+  #syncWatchdog(state: PhoneState): void {
+    const shouldWatch = state === 'running' || state === 'booting'
+    if (!shouldWatch) {
+      this.#stopWatchdog()
+      return
+    }
+    if (this.#watchdogStop || this.#disposed) return
+    const intervalMs = this.#deps.watchdogIntervalMs ?? 2000
+    const schedule =
+      this.#deps.setInterval ??
+      ((callback: () => void, ms: number) => {
+        const timer = setInterval(callback, ms)
+        timer.unref?.()
+        return () => clearInterval(timer)
+      })
+    this.#watchdogStop = schedule(() => {
+      void this.#watchdogTick()
+    }, intervalMs)
+  }
+
+  #stopWatchdog(): void {
+    if (this.#watchdogStop) {
+      this.#watchdogStop()
+      this.#watchdogStop = undefined
+    }
+  }
+
+  /** 每 2s 对账（issue #83）：外部 kill/端口消失 → ≤2s 内 stopped + lastError + 清流。 */
+  async #watchdogTick(): Promise<void> {
+    if (this.#disposed || this.#disposing) return
+    const action = this.#actionInflight?.action
+    if (action === 'stop' || action === 'restart') return
+    const state = this.#lifecycle.state
+    if (state !== 'running' && state !== 'booting') return
+    const handle = this.#handle
+    if (!handle) return
+    const alive = await handle.adapter.isAlive().catch(() => false)
+    if (alive) return
+    if (this.#lifecycle.state !== state) return
+    await this.#handleExternalGone()
+  }
+
+  async #handleExternalGone(): Promise<void> {
+    const handle = this.#handle
+    await handle?.adapter.cancelStart?.().catch(() => undefined)
+    await this.#closeSessions().catch(() => undefined)
+    await this.#disconnectAdb().catch(() => undefined)
+    this.#lifecycle.halt('实例已被外部关闭（pid 消失/端口关闭）')
+    this.#handleError = undefined
+    this.#handleErrorAt = 0
+    this.#emitStatus()
+  }
+
+  #delay(delayMs: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, delayMs)
+      timer.unref?.()
+    })
   }
 
   #assertAlive(): void {

@@ -123,9 +123,15 @@ export class AttachRuntime implements RuntimeAdapter {
     this.#since = undefined
   }
 
+  /** 看门狗用（issue #83）：attach 是 adopted，只用端口/连通性判断。 */
+  async isAlive(): Promise<boolean> {
+    if (!this.#endpoint) return false
+    return this.#env.waitForPort(this.#endpoint, { timeoutMs: 300 }).catch(() => false)
+  }
+
   async status(): Promise<RuntimeStatus> {
     if (!this.#endpoint) {
-      return { kind: 'attach', running: false, paused: false }
+      return { kind: 'attach', running: false, paused: false, owned: false, adopted: true }
     }
     const open = await this.#env.waitForPort(this.#endpoint, {
       timeoutMs: 400,
@@ -136,6 +142,8 @@ export class AttachRuntime implements RuntimeAdapter {
       kind: 'attach',
       running: open,
       paused: false,
+      owned: false,
+      adopted: true,
       endpoint: this.#endpoint,
       since: this.#since,
     }

@@ -37,6 +37,10 @@ export interface RuntimeStatus {
   since?: number
   pid?: number
   containerId?: string
+  /** 实例是否由插件 spawn（issue #83）：true=owned（插件负责停止/保存快照）。 */
+  owned: boolean
+  /** 实例是否是复用的用户既有实例（issue #83）：true=adopted（只断开，不杀）。 */
+  adopted: boolean
   /** 尽力而为的 CPU/内存占用（取不到则省略，issue #56）。 */
   cpuPct?: number
   memPct?: number
@@ -62,6 +66,11 @@ export interface RuntimeAdapter {
   resume(): Promise<void>
   stop(): Promise<void>
   status(): Promise<RuntimeStatus>
+  /**
+   * 实例是否还活着（issue #83 看门狗）：owned 用 pid（+端口由 service/status 兜底），
+   * adopted 用端口/adb；已停止返回 false。
+   */
+  isAlive(): Promise<boolean>
   /**
    * 启动被取消（boot 超时/规则失败）时清理半个实例，避免孤儿进程（issue #67）。
    * 可选：不实现则视为 no-op。

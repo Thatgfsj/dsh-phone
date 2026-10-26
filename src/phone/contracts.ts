@@ -23,7 +23,19 @@ export interface PhoneStatus {
   /** booting 时的进度阶段（issue #56，可选，向后兼容）。 */
   phase?: BootPhase
   endpoint?: Endpoint
+  /** 实例是否由插件 spawn（issue #83；host GET /status /runtime 用）。 */
+  owned?: boolean
+  /** 是否为复用的用户实例（issue #83）。 */
+  adopted?: boolean
+  /** 宿主侧进程 pid（owned emulator；issue #83）。 */
+  pid?: number
   lastError?: string
+}
+
+/** issue #83：stop 选项。 */
+export interface StopOptions {
+  /** 忽略错误，尽量把状态落回 stopped（restart/关闭用）。 */
+  force?: boolean
 }
 
 /** 工具前置检查：running 可直接执行；booting 返回可重试中间态（不报错）。 */
@@ -37,6 +49,14 @@ export interface PhoneOperations {
   ensureRunning(): Promise<void>
   /** 任意工具/面板交互的统一步骤：懒启动；已在 booting 时立即返回中间态。 */
   ensureInteractive(): Promise<InteractiveReadiness>
+  /** issue #83：显式启动（幂等；返回最终状态）。 */
+  start(): Promise<PhoneStatus>
+  /** issue #83：停止。owned → adapter.stop（保存快照等退出）；adopted → 只断开。 */
+  stop(options?: StopOptions): Promise<PhoneStatus>
+  /** issue #83：重启（先停后启；返回最终状态）。 */
+  restart(): Promise<PhoneStatus>
+  /** issue #83：实例是否还活着（看门狗/健康检查用）。 */
+  isAlive(): Promise<boolean>
   screenshot(): Promise<Uint8Array>
   tap(x: number, y: number): Promise<void>
   swipe(x1: number, y1: number, x2: number, y2: number, durationMs: number): Promise<void>
