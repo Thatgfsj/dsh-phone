@@ -29,6 +29,8 @@
 | POST | `/dsh-phone/api/attach/verify` | `{ endpoint:'127.0.0.1:5555' }` | `{ ok:boolean, latencyMs, banner?:string }`（**不落盘**，R5） |
 | GET | `/dsh-phone/api/provision` | — | `ProvisionStatus`（见 §1.4） |
 | POST | `/dsh-phone/api/provision` | `{ runtime:'emulator'|'redroid'|'attach', image?:'google_apis'|'aosp_atd' }` | `ProvisionStatus`（仅浏览器同源；见 §1.4） |
+| GET | `/dsh-phone/api/runtime` | — | `RuntimeInfo`（见 §1.5） |
+| POST | `/dsh-phone/api/runtime` | `{ action:'start'|'stop'|'restart' }` | **202** 扁平体 `{ ok:true, action, state }`（异步执行，UI 轮询 GET /runtime） |
 | GET | `/dsh-phone/api/screenshot` | — | PNG 字节（`image/png`，非 JSON 包装） |
 
 说明：
@@ -62,8 +64,37 @@ interface PhoneStatus {
   cpuPct?: number; memPct?: number; uptimeMs?: number; bootMs?: number
   endpoint?: { host: string; port: number }
   lastError?: string
+  owned?: boolean; adopted?: boolean; pid?: number; since?: number  // issue #83
 }
 ```
+
+### 1.5 生命周期控制（issue #83）
+
+```ts
+interface RuntimeInfo {
+  state: 'stopped' | 'booting' | 'running' | 'paused'
+  running: boolean     // running/paused 视为进程存活
+  owned: boolean       // true = 插件 spawn 的实例；false = adopt 用户已有实例
+  adopted: boolean
+  pid?: number
+  endpoint?: { host: string; port: number }
+  since?: number
+  busy: boolean        // 有 start/stop/restart 动作在队列中/执行中
+  lastError?: string   // 含动作错误码前缀（E_START_FAILED / E_STOP_FAILED / E_RESTART_FAILED）
+}
+```
+
+- **GET /runtime**：只读快照（浏览器与 agent token 均可读），供 UI 轮询。
+- **POST /runtime**：`{action}` 入队后立即返回 **202** 扁平体 `{ok:true,action,state}`（state 为入队前状态），
+  动作在 Host 单队列中**串行互斥**执行；失败写入 `lastError`，UI 轮询 `GET /runtime` 展示。
+- **鉴权差异（安全）**：`start`/`restart` 允许浏览器同源与 agent token（Agent 可自愈）；
+  **`stop` 仅浏览器同源**，agent token 调用 → 403 `E_FORBIDDEN`（关闭手机是破坏性动作，必须用户触发）。
+- **语义**：`stop` 对 owned 实例调用 adapter.stop（emulator 保存快照后退出；redroid 停容器）；
+  adopted 实例只断开 ADB/流，**不杀用户进程**；booting 中 stop 会取消启动（runtime `cancelStart`）。
+  `restart` = stop（若在运行）→ start；外部 kill 由 runtime 看门狗对账为 stopped + lastError。
+- 错误码：`E_START_FAILED` / `E_STOP_FAILED` / `E_RESTART_FAILED` / `E_LIFECYCLE_BUSY`
+  （动作失败体现在 `lastError`；HTTP 动作本身仍 202，UI 轮询判定）。
+- **GET /status 兼容**：原 `PhoneStatus` 字段不变，新增可选 `owned/adopted/pid/since`（见 §1.1）。
 
 ### 1.2 首次使用守卫（onboarding，issue #30）
 
@@ -202,6 +233,10 @@ interface ProvisionStatus {
 | `E_ONBOARDING_REQUIRED` | 200（/status、/screenshot）/ 工具结构化 | false | 首次使用未确认；`onboarding` 含 consent 提问/选项/安装指引/docs |
 | `E_ONBOARDING_DECLINED` | 200（/status、/screenshot）/ 工具结构化 | false | 用户选择暂不使用；可在设置页重新启用 |
 | `E_BOOTING` | 200/WS state | true | 启动中，带 `bootMs` |
+| `E_STOP_FAILED` | 动作结果（GET /runtime lastError） | true | 停止实例失败（取消启动/保存快照/杀进程失败） |
+| `E_START_FAILED` | 动作结果（GET /runtime lastError） | true | 启动动作失败 |
+| `E_RESTART_FAILED` | 动作结果（GET /runtime lastError） | true | 重启动作失败 |
+| `E_LIFECYCLE_BUSY` | 动作结果（GET /runtime lastError） | true | 生命周期动作队列繁忙（正常由队列串行化，不应出现） |
 | `E_STREAM_START_FAILED` | WS error | true | scrcpy server 启动/推包失败 |
 | `E_STREAM_IDLE` | close 1011 | true | 60s 未收到客户端消息（半开连接） |
 | `E_STREAM_BACKPRESSURE` | close 1011 | true | WS 发送积压超限（keyframe/config 无法安全丢弃） |

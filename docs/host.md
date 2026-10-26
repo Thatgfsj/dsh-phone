@@ -184,6 +184,8 @@ adapter 不可用失效、启动失败立即重探。
 | POST `/config` | body `{path:string[], value, revision}`（revision 必填）；只允许五键（attach 三键 + onboarding 两键）；R5 检查；写后回读 + 复验；成功返回同上 snapshot |
 | POST `/attach/verify` | body `{endpoint}`；adb connect(timeout 3000) + `getprop ro.product.model`；成功 200 `{ok:true,latencyMs,banner}`，失败 200 `{ok:false,latencyMs,error}`；不落盘 |
 | GET `/screenshot` | `image/png` + no-store；onboarding pending/declined → 200 JSON `E_ONBOARDING_*`；booting → 200 JSON `E_BOOTING`（error.bootMs） |
+| GET `/runtime` | `RuntimeInfo`（state/running/owned/adopted/pid/endpoint/since/busy/lastError）；见 §5.4 |
+| POST `/runtime` | body `{action:'start'|'stop'|'restart'}`；202 `{ok,action,state}` 异步入队；**stop 仅浏览器**，agent token 只允许 start/restart |
 | GET `/provision` | `ProvisionStatus`（idle/running/done/failed + step/percent/log/error/runtime）；见 §5.3 |
 | POST `/provision` | body `{runtime, image?}`；**仅浏览器同源**触发一键准备；返回当前 `ProvisionStatus` |
 
@@ -239,6 +241,27 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 > 注意：`verify` 成功只记录在进程内 verified 集合（TTL 5 分钟）；插件重载或过期后需重新 verify。
 > Agent 通道**不能**写 `onboarding.*`：首次使用守卫的同意/选择必须由用户在浏览器设置页/引导卡片完成。
 > 候选路径/端口探测仍由操作 Agent 的 shell 完成（插件不扫盘，见 §6.1）。
+
+### 5.4 生命周期控制（issue #83）
+
+模块：`src/phone/lifecycle-control.ts#LifecycleController`（host scope）。
+
+- **GET `/runtime`** → `{state,running,owned,adopted,pid?,endpoint?,since?,busy,lastError?}`：
+  `running = state==='running'||'paused'`；`busy` = 队列中/执行中有动作；`lastError` 优先给控制器最近一次
+  动作失败（`E_*_FAILED: message`），否则透传 `service.status().lastError`。
+- **POST `/runtime`** → 校验 action 后**立即 202** `{ok:true,action,state}`（state 为入队前状态）；
+  动作进入单队列串行执行（start/stop/restart 不并发），UI 轮询 GET /runtime。
+- **鉴权**：浏览器同源（connection fence）可执行全部；agent token 只允许 `start`/`restart`（自愈），
+  `stop` 返回 403 `E_FORBIDDEN`（破坏性动作必须用户点击）。
+- **调用 PhoneService（与 runtime #83 契约对齐，未合并时能力探测）**：
+  `start()`（缺失回退 `ensureRunning()`）、`stop({force:false})`（缺失 → lastError `E_STOP_FAILED`）、
+  `restart()`（缺失回退 stop→start）。runtime 合入后自动生效，无需改 host 接线。
+- **语义**（由 runtime 实现）：stop owned → adapter.stop（emulator 保存快照后退出 / redroid 停容器）；
+  adopted → 只断 ADB/流，不杀用户进程；booting 中 stop 取消启动（`cancelStart`）；外部 kill 由 runtime
+  看门狗 ≤2s 对账为 stopped + lastError，host 只透传。
+- **卸载不阻塞**：`ctx.effect` 的 disposer 只调用 `lifecycle.dispose()`（清队列）并 `void service.dispose()`
+  **不 await**；长 boot 的取消由 runtime `cancelStart`/dispose 负责，避免 DSH 禁用/重载挂住。
+- **GET /status 兼容**：增加可选 `owned/adopted/pid/since` 字段，旧客户端忽略即可。
 
 ### 5.3 一键准备运行环境（Provisioning，issue #65）
 
@@ -325,6 +348,9 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
    形态（IPv4-mapped 等），也未验证卸载后 token 文件确实被删除。
 9. **`x-dsh-phone-token` 与同源 cookie 并存**：token 缺失但同源 cookie 有效时走普通 requestRejection
    分支放行（与浏览器 `POST /config` 等价），该分支只做了单测。
+12. **生命周期动作真机端到端**：外部 kill 后看门狗对账、stop owned（保存快照）/adopted（只断开）、
+    booting 取消启动由 runtime #83 实现与验证；host 侧用 fake service 覆盖队列/鉴权/错误映射，未在真实
+    emulator 上跑「kill → 2s 内 stopped → start/restart」；client #84 的防呆 UI 不在本 PR。
 11. **Provisioning 真机端到端**：`sdkmanager` 下载/许可/AVD 创建只用假 CommandRunner 单测覆盖；
     本机未执行真实下载（~1.7GB 网络安装）与 `sdkmanager --licenses` 交互，也未验证命令超时后的
     进程组清理（`execFile` 只 SIGKILL 直接子进程；sdkmanager 的 java 子进程可能残留）。
@@ -356,3 +382,4 @@ Host 单测（`tests/host/`，不依赖真机）：
 | `onboarding.test.ts` | pending/declined/accepted 守卫、step/options/install/docs 结构、effectiveRuntime、旧配置 normalize |
 | `wiring.test.ts` | `readOnboarding` 与 `readServiceConfig`：accepted+choice 等价显式 runtime、pending 仍 auto |
 | `provision.test.ts` | 假 CommandRunner：emulator 成功/已装快速 done/aosp_atd 镜像/磁盘不足/断网/许可失败/AVD 创建失败/重复/并发/超时/redroid/attach/进度；命令构建器与 locateSdkTools |
+| `lifecycle-control.test.ts` | info 映射、start/stop/restart 能力探测与回退、单队列互斥/busy、错误码 lastError、dispose |

@@ -5,6 +5,7 @@ import { test } from 'node:test'
 
 import { safeGetOrigin } from '../../src/http/origin.ts'
 import { createApiHandler, createReadOnlyHandler, isValidEndpointString, VERIFY_TTL_MS } from '../../src/http/routes.ts'
+import type { LifecycleControllerLike, RuntimeAction, RuntimeInfo } from '../../src/phone/lifecycle-control.ts'
 import type { ProvisionRequest, ProvisionStatus, ProvisionerLike } from '../../src/provisioning/types.ts'
 import { RuntimeUnavailableError } from '../../src/runtime/types.ts'
 import type { ConfigView, HttpRouteDeps } from '../../src/http/routes.ts'
@@ -82,6 +83,10 @@ interface Harness {
   connection: { requestRejection(req: IncomingMessage): number | undefined } | undefined
   agentAuth: ((req: IncomingMessage) => boolean) | undefined
   now: number
+  lifecycle: LifecycleControllerLike & {
+    actions: RuntimeAction[]
+    nextInfo: RuntimeInfo
+  }
   provisioner: ProvisionerLike & {
     requests: ProvisionRequest[]
     nextStatus: ProvisionStatus
@@ -127,6 +132,23 @@ function makeHarness(overrides: Partial<HttpRouteDeps> = {}): Harness {
     verifiedSet: new Set<string>(),
     agentAuth: undefined,
     now: 1_000_000,
+    lifecycle: {
+      actions: [],
+      nextInfo: {
+        state: 'stopped',
+        running: false,
+        owned: true,
+        adopted: false,
+        busy: false,
+      },
+      async info() {
+        return harness.lifecycle.nextInfo
+      },
+      enqueue(action: RuntimeAction) {
+        harness.lifecycle.actions.push(action)
+      },
+      dispose() {},
+    },
     provisioner: {
       requests: [],
       nextStatus: { state: 'running', step: 'install', percent: 30, log: ['installing'], runtime: 'emulator' },
@@ -142,6 +164,7 @@ function makeHarness(overrides: Partial<HttpRouteDeps> = {}): Harness {
   } as unknown as Harness
   harness.handler = createApiHandler({
     service,
+    lifecycle: harness.lifecycle,
     provisioner: harness.provisioner,
     getSettings: () => settings,
     getConnection: () => harness.connection,
@@ -818,4 +841,106 @@ test('safeGetOrigin：getOrigin 抛异常/缺失/空串 → 回退，不阻断 H
   assert.equal(safeGetOrigin({}), 'http://127.0.0.1')
   assert.equal(safeGetOrigin({ getOrigin: () => '' }), 'http://127.0.0.1')
   assert.equal(safeGetOrigin({ getOrigin: () => 'http://127.0.0.1:3096' }), 'http://127.0.0.1:3096')
+})
+/* ----------------------------- issue #83：生命周期 API ----------------------------- */
+
+test('GET /runtime：返回状态/所有权/pid/endpoint/busy/lastError', async () => {
+  const harness = makeHarness()
+  harness.lifecycle.nextInfo = {
+    state: 'running',
+    running: true,
+    owned: true,
+    adopted: false,
+    pid: 4321,
+    endpoint: { host: '127.0.0.1', port: 5555 },
+    since: 123,
+    busy: false,
+    lastError: 'note',
+  }
+  const response = await invoke(harness, { method: 'GET', url: '/dsh-phone/api/runtime' })
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(json(response).value, harness.lifecycle.nextInfo)
+  assert.equal(response.headers['cache-control'], 'no-store')
+})
+
+test('POST /runtime：浏览器 start/stop/restart → 202 {ok,action,state} 且入队', async () => {
+  const harness = makeHarness()
+  harness.lifecycle.nextInfo = {
+    state: 'running',
+    running: true,
+    owned: true,
+    adopted: false,
+    busy: false,
+  }
+  for (const action of ['start', 'stop', 'restart'] as const) {
+    const response = await invoke(harness, {
+      method: 'POST',
+      url: '/dsh-phone/api/runtime',
+      body: { action },
+    })
+    assert.equal(response.statusCode, 202, action)
+    assert.deepEqual(json(response), { ok: true, action, state: 'running' }, action)
+  }
+  assert.deepEqual(harness.lifecycle.actions, ['start', 'stop', 'restart'])
+})
+
+test('POST /runtime：agent token 允许 start/restart 自愈，但 stop → 403', async () => {
+  const harness = makeHarness()
+  harness.connection = { requestRejection: () => 401 }
+  harness.agentAuth = (req) =>
+    (req.headers as Record<string, string>)['x-dsh-phone-token'] === 'good-token'
+  const headers = { 'x-dsh-phone-token': 'good-token' }
+
+  for (const action of ['start', 'restart']) {
+    const response = await invoke(harness, {
+      method: 'POST',
+      url: '/dsh-phone/api/runtime',
+      body: { action },
+      headers,
+    })
+    assert.equal(response.statusCode, 202, action)
+  }
+  const stop = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/runtime',
+    body: { action: 'stop' },
+    headers,
+  })
+  assert.equal(stop.statusCode, 403)
+  assert.equal(json(stop).error.code, 'E_FORBIDDEN')
+  assert.deepEqual(harness.lifecycle.actions, ['start', 'restart'])
+})
+
+test('POST /runtime：非法 action → 400（不入队）', async () => {
+  const harness = makeHarness()
+  const response = await invoke(harness, {
+    method: 'POST',
+    url: '/dsh-phone/api/runtime',
+    body: { action: 'kill' },
+  })
+  assert.equal(response.statusCode, 400)
+  assert.equal(json(response).error.code, 'E_BAD_REQUEST')
+  assert.deepEqual(harness.lifecycle.actions, [])
+})
+
+test('GET /status：兼容并补充 owned/adopted/pid（issue #83）', async () => {
+  const service = makeService({
+    status: async () => ({
+      state: 'running',
+      runtime: 'emulator',
+      platform: 'linux',
+      owned: true,
+      adopted: false,
+      pid: 999,
+      since: 456,
+    }),
+  })
+  const harness = makeHarness({ service })
+  const response = await invoke(harness, { method: 'GET', url: '/dsh-phone/api/status' })
+  assert.equal(response.statusCode, 200)
+  const value = json(response).value
+  assert.equal(value.owned, true)
+  assert.equal(value.adopted, false)
+  assert.equal(value.pid, 999)
+  assert.equal(value.since, 456)
 })
