@@ -1,6 +1,6 @@
 # 安装、升级与卸载
 
-> 适用于 dsh-phone **v0.3.0**（以 [Releases](https://github.com/Thatgfsj/dsh-phone/releases) 最新 tag 为准）。
+> 适用于 dsh-phone **v0.4.0**（以 [Releases](https://github.com/Thatgfsj/dsh-phone/releases) 最新 tag 为准）。
 > DSH 版本要求：`>=0.2.1-rc.2 <0.3.0`；Node `>=20`。安装类问题先看 [troubleshooting.md](troubleshooting.md) §1/§1.1。
 
 ## 0. 前置条件
@@ -27,22 +27,22 @@
 ## 1. 推荐：GitHub Release 预构建 tgz（无需 `npm run build`）
 
 发布流水线（构建期 CI，#74 起）会产出预构建包，内含 `lib/`（Host 转译产物 + 客户端 bundle）、
-`locale/`、`cordis.patch.yml`、`icon.svg`、`README.md`、`LICENSE`、`scripts/`。
+`locale/`、`cordis.patch.yml`、`icon.svg`、`README.md`、`LICENSE`、`scripts/`、`system/`（肥鱼手机定制层，详见 [../system/README.md](../system/README.md)）。
 
 ### 1.1 下载并安装
 
-1. 打开 <https://github.com/Thatgfsj/dsh-phone/releases>，选最新 tag（如 `v0.3.0`），
+1. 打开 <https://github.com/Thatgfsj/dsh-phone/releases>，选最新 tag（如 `v0.4.0`），
    在 **Assets** 下载 `dsh-phone-<version>.tgz`；或用 gh CLI：
 
    ```sh
-   gh release download v0.3.0 -R Thatgfsj/dsh-phone -p 'dsh-phone-*.tgz'
-   tar -tzf dsh-phone-0.3.0.tgz | head -20     # 确认包内直接有 lib/、locale/、cordis.patch.yml
+   gh release download v0.4.0 -R Thatgfsj/dsh-phone -p 'dsh-phone-*.tgz'
+   tar -tzf dsh-phone-0.4.0.tgz | head -20     # 确认包内直接有 lib/、locale/、cordis.patch.yml、system/
    ```
 
 2. 安装到目标 profile（`--profile` 必须写在转发参数之前）：
 
    ```sh
-   dsh plugin --profile web add ./dsh-phone-0.3.0.tgz
+   dsh plugin --profile web add ./dsh-phone-0.4.0.tgz
    ```
 
 3. **重启 DSH**，然后**刷新浏览器页面（F5）**（区别见 §1.3）。
@@ -178,7 +178,7 @@ dsh --profile web --patch /tmp/overlay.yml --help
 ## 4. 临时 profile 验证（不影响现有配置）
 
 ```sh
-dsh plugin --profile phone-verify add /abs/path/to/dsh-phone-0.3.0.tgz
+dsh plugin --profile phone-verify add /abs/path/to/dsh-phone-0.4.0.tgz
 dsh --profile phone-verify --dump-config | grep -n -A 12 'dsh-phone'
 dsh --profile phone-verify --help            # Host 冒烟（不绑端口）
 dsh plugin --profile phone-verify remove dsh-phone

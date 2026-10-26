@@ -5,6 +5,12 @@
 > 真实设备链路另由 env-gated 脚本 scripts/verify/verify-emulator.mjs 覆盖（DSH_PHONE_E2E=1 才跑；默认 SKIP 不碰设备）。
 > 未测项一律显式 SKIP 并写明原因，**不允许假绿**；"人工待办"不是已通过。
 >
+> **v0.4.0（2026-10-27）发布状态**：#83 生命周期控制三端已合并（API #84 / UI #85 / runtime #86 /
+> 收口修复 #90），单测覆盖 2s 看门狗、owned/adopted 所有权语义、restart 序列、并发动作与 dispose 5s 预算
+> （§9.2）；#87 肥鱼手机定制已在真实 emulator 实机验证 **1080x2400 / zh-CN / 空白首页 / 壁纸 111-222 轮换 /
+> YouTube 已卸载**（§9.1）；#92 客户端生命周期验收 11 例单测（[client.md](client.md) §4.5）。
+> 本机 `node --test`：**472 例 / 466 pass / 6 skipped / 0 fail**；`npm run check` 通过（单文件 893 行 < 1000）。
+>
 > **v0.3.0（2026-10-26）发布状态**：#67 emulator 启动专项实测**温启动 ~15s / 暂停恢复 ~19s**
 > （冷启动 33–95s 有客观下限，`aosp_atd` 未实测；完整数据与方法见 §8）；#73 视频流 viewer 心跳/
 > 引用计数代际/WS 背压/双页 4001 已修复并有单测（§2）。#40 真实环境验收**部分完成**——#58 已实测
@@ -305,3 +311,45 @@ attach.endpoint=127.0.0.1:5555。
   样本噪声大）；上表为 pixel_6 参数 + swiftshader_indirect 的两轮中位数，可复现。
 - Windows/macOS 的 quick-boot 与 console 保存未实测。
 - #72 的安全/生命周期项（phone_key 白名单、screenshot 掩码、booting 断连、control 单飞）拆到独立 PR。
+## 9. v0.4.0 新增验收（#83 生命周期控制 / #87 肥鱼手机定制）
+
+> 记录于 2026-10-27。单测数字来自本机 `node --test`（472 例 / 466 pass / 6 skipped / 0 fail）；
+> 实机结果来自维护者在本机 emulator 上的手工验收，**不是 CI 产物**，也不代表所有宿主。
+
+### 9.1 #87 肥鱼手机定制（实机）
+
+环境：`system-images;android-34;google_apis;x86_64` + AVD `medium_phone`（1080x2400 @420dpi）。
+
+| 检查项 | 期望 | 实测 |
+|---|---|---|
+| 分辨率 | 1080x2400 | **PASS**（`wm size`） |
+| 语言 | `zh-CN` 中文系统 | **PASS** |
+| 桌面 | 空白：无图标/widget（自研 `com.dafeiyu.shell` 作为 HOME） | **PASS** |
+| 壁纸 | `111`/`222` 双壁纸轮换 | **PASS** |
+| YouTube | 已卸载（包不存在） | **PASS** |
+| 截图证据 | 首页两张 | `docs/screenshots/feiyu-home-1.webp`、`feiyu-home-2.webp`（360x800 WebP q80，29KB / 36KB） |
+
+应用方式：`system/provision-device.sh`（幂等，可重复执行）；一键准备（Provisioning）在
+`step=customize` 自动调用（[#88](https://github.com/Thatgfsj/dsh-phone/issues/88)）。
+来源与许可（壁纸由用户提供、系统镜像不入库）见 [../system/README.md](../system/README.md)。
+
+### 9.2 #83 生命周期控制（单测 + 手工核对）
+
+- **runtime 单测**（`tests/runtime/lifecycle-control.test.ts`）：外部 kill → **2s 内** `stopped` +
+  可读 `lastError`；owned 的 `stop` 调 `adapter.stop()`（保存快照）、adopted 只断开不杀进程；
+  booting 中停止会打断启动；`restart` = stop → start 序列；并发动作合并/排队；动作超时；
+  `dispose()` 的 5s 硬预算与所有权区分（owned 停机 / adopted 仅断开）。
+- **客户端单测**（`tests/client/lifecycle-acceptance.test.ts`，**11 例**）：动作状态机、错误映射、
+  owned vs adopted 文案、轮询；人工核对清单见 [client.md](client.md) §4.5。
+- **结构约束**：#90 收口后 `src/phone/service.ts` **893 行**（< 1000 硬线），新增
+  `service-types.ts`/`service-helpers.ts`/`control.ts`/`usage.ts`。
+- **手工核对（未自动化）**：面板 header 徽章与按钮、停止后空态 + 「启动手机」、adopted 提示文案、
+  设置页同入口。**真实浏览器点击未在 CI 验证**。
+
+### 9.3 本版本未覆盖（不得视为通过）
+
+- 真实浏览器下的按钮点击/轮询视觉验收（本机无浏览器自动化）→ 人工待办。
+- Windows / macOS 宿主上的生命周期动作与 `system/` 定制脚本均未验证。
+- redroid 的 `stop`/`dispose` 语义未实测（本机无 Docker）。
+- 冷启动仍 33–95s（见 §8），本版本未针对启动做优化。
+
