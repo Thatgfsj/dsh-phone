@@ -16,6 +16,9 @@ import { choiceLabelKey, createOnboardingCard, describeOnboarding } from './onbo
 import { createProvisionCard } from './provision-card.ts'
 import { createFetchProvisionApi } from './provision-api.ts'
 import type { ProvisionApi } from './provision-api.ts'
+import { createFetchRuntimeApi } from './runtime-api.ts'
+import type { RuntimeApi } from './runtime-api.ts'
+import { createRuntimeControls } from './runtime-controls.ts'
 
 export interface SettingsDeps {
   React: typeof ReactNamespace
@@ -23,6 +26,8 @@ export interface SettingsDeps {
   api?: ConfigApi
   /** Injectable provisioning API for tests/embedding. */
   provisionApi?: ProvisionApi
+  /** Injectable lifecycle API for tests/embedding. */
+  runtimeApi?: RuntimeApi
   /** Opens the right-Sidebar phone tab (the Host decides the tab kind). */
   openPanel: () => void
 }
@@ -35,6 +40,7 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
   const OnboardingCard = createOnboardingCard({ React, t })
   const ProvisionEntry = createProvisionCard({ React, t }).entry
   const provisionApi = deps.provisionApi ?? createFetchProvisionApi()
+  const runtimeControls = createRuntimeControls({ React, t, api: deps.runtimeApi ?? createFetchRuntimeApi() })
 
   function PhoneSettings(): ReactNamespace.ReactElement {
     const [config, setConfig] = React.useState<PhoneConfigView>()
@@ -45,6 +51,7 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
     const [message, setMessage] = React.useState<string>()
     const [error, setError] = React.useState<string>()
     const aliveRef = React.useRef(true)
+    const runtime = runtimeControls.useRuntime()
 
     const load = React.useCallback(async (): Promise<PhoneConfigView | undefined> => {
       try {
@@ -179,6 +186,9 @@ export function createPhoneSettings(deps: SettingsDeps): ReactNamespace.Componen
             onMessage: (text: string) => setMessage(text),
             onError: (text: string | undefined) => setError(text),
           })
+        : null,
+      editable && config !== undefined
+        ? h(runtimeControls.SettingsSection, { runtime })
         : null,
       mode.showSetup && editable
         ? h(

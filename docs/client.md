@@ -31,6 +31,11 @@ src/client/
   provision-flow.ts 准备状态机 + 1s 轮询器（纯逻辑，可注入 clock/timer，单测）
   provision-card.ts pending 一键卡与设置页入口组件（状态机 Hook + 自动启用）
   provision-views.ts 进度条/最近日志/手动命令的展示组件
+  runtime-api.ts 生命周期 API（GET/POST /runtime）+ 所有权/动作判定（#83）
+  runtime-flow.ts RuntimePoller（动作 1s/空闲 3s）+ 停止/外部关闭 UI 判定（#83）
+  runtime-controls.ts 生命周期 controller Hook（确认/动作/反馈/轮询）
+  runtime-views.ts Header 动作/stopped 空态/设置页区块/消息条
+  styles-runtime.ts 生命周期按钮/消息条 CSS（从 styles.ts 组合）
   connection.ts  协议编解码 + 指数退避 + 可见性双检测门控（纯逻辑）
   stream.ts      WebSocket 生命周期：握手、重连、心跳、半开检测
   decoder.ts     解码编排：WebCodecs → 软解回退
@@ -261,6 +266,34 @@ min-content 宽度只有 1 个字。重构后：
 6. 长时间文案（中文长句、endpoint、错误 message）在任何宽度下都按行换行，绝不竖排单字。
 7. 明暗主题切换：面板背景/边框/文字颜色全部跟随 `--dsw-alias-*`，无硬编码色。
 
+### 4.4 生命周期控制（issue #83）
+
+面板 header 提供「重启」与「关闭/断开」，stage 在停止时提供大按钮恢复；设置页有同一组入口。
+
+| 文件 | 职责 |
+|---|---|
+| `runtime-api.ts` | `GET/POST /dsh-phone/api/runtime`；容错解析、`owned/adopted` 所有权文案、动作可用性、旧 Host 404 降级 |
+| `runtime-flow.ts` | `RuntimePoller`（动作期间 1s / 空闲 3s，外部 kill ≤3s 可见）、`describeRuntimeUi`、外部关闭判定、错误码映射 |
+| `runtime-controls.ts` | controller Hook：确认、动作、反馈、轮询快慢切换 |
+| `runtime-views.ts` | Header 动作按钮、stopped/外部关闭空态、设置页「运行与生命周期」区块、消息条 |
+
+行为：
+
+- **owned**（插件拉起）：按钮显示「关闭手机」，确认文案说明会先保存快照再退出；**adopted**（用户自己启动）：显示「断开连接」，确认说明不会关闭用户实例。
+- 动作进行中（start/stop/restart）：按钮禁用 + 进度文案；`GET /runtime` 每 1s 轮询，完成后消息条反馈；失败给错误的可读文案 +「重新检测」/重试。
+- 停止或被外部 kill：stage 显示「手机已停止 / 手机已被外部关闭」+ `lastError` 原因 + 大按钮「启动手机」「重启」「重新检测」，不再黑屏。stopped 优先级高于连接错误。
+- 空闲时每 3s 轮询 `/runtime`，Host 看门狗把外部消失对账为 stopped 后 UI 3s 内更新；旧 Host 无该 API（404）显示「不支持生命周期控制」+ 重新检测。
+- 设置页「运行与生命周期」：状态/所有权说明/身份（endpoint/pid）+ 启动/停止/重启/重新检测 + 停止防呆说明。
+
+人工核对清单（真实 emulator，Host #83 合并后）：
+
+1. `kill -9` emulator 进程：≤3s 面板变「手机已被外部关闭」，点「启动手机」可恢复。
+2. owned 实例点「关闭手机」：确认框出现，确认后保存快照退出，状态 stopped；再点启动可恢复。
+3. adopt 实例（用户自己启动的 emulator）点「断开连接」：只断流/连接，进程仍在，重新连接可恢复。
+4. 「重启」：先停后启，过程中按钮禁用 + 进度，完成消息条提示；失败可重试。
+5. 设置页同一组入口行为一致；错误态始终有「重新检测」按钮。
+6. 卸载/重载插件：owned 实例不再遗留（Host 侧 dispose 语义，#83 验收）；adopted 不受影响。
+
 ## 5. 首次使用引导（onboarding，issue #31）
 
 配合 Host 侧 onboarding 守卫（issue #30）。契约：
@@ -343,7 +376,8 @@ header 入口注册与点击→openTab、auto-open 三态条件（pending 打开
 booting 进度分段/百分比/超时文案与轮询器生命周期（假 clock/status）、enabled 三态展示判定与写入禁用、
 面板布局断点（320/360/400/600/800）、stage overlay 判定优先级、booting 摘要（已等待 Ns / 预计约 100s）、
 provisioning 状态解析/步骤映射/日志截断、pending→running→done/failed 轮询器生命周期（假 clock/status）、
-停止轮询/409 依赖/自动启用判定/旧 Host 降级、POST body 与错误 envelope。
+停止轮询/409 依赖/自动启用判定/旧 Host 降级、POST body 与错误 envelope、
+生命周期：runtime 解析/所有权文案/动作可用性/外部关闭判定、动作 1s 与空闲 3s 轮询、stopped 空态优先级、错误码映射。
 
 ## 7. 未验证项（真实浏览器 / 真实 Host 待 task-8）
 1. WebCodecs 在 Chrome/Firefox/Safari 对 `avc.format='annexb'` + in-band SPS/PPS 的接受度；
@@ -367,3 +401,4 @@ provisioning 状态解析/步骤映射/日志截断、pending→running→done/f
 14. 面板重做后的 320/400/600px 三档真实截图核对未做（本机无浏览器自动化）；布局纯函数已单测，CSS 观感需 #8 人工确认。
 15. 一键准备 UI 依赖 Host #65（`/dsh-phone/api/provision`）；#65 合并前真实 Host 会 404 → UI 降级为手动命令（已单测），真实「点一次装完并启用」需 #8 在合并后验收。
 16. 「停止刷新」只停客户端轮询，契约没有 cancel 端点；后台 sdkmanager/avdmanager 可能继续执行（文案已说明）。
+17. 生命周期控制依赖 Host #83（`/dsh-phone/api/runtime`）；未合并时 UI 显示「不支持生命周期控制」+ 重新检测（已单测），kill -9/owned stop/adopted disconnect/重启/卸载语义需 #8 在合并后真机验收。

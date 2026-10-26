@@ -168,9 +168,13 @@ export class RuntimePoller {
     }
   }
 
-  /** Read immediately (retry/recheck buttons). */
+  /** Read immediately (retry/recheck buttons), even before start(). */
   async refresh(): Promise<void> {
-    await this.#tick()
+    try {
+      this.#options.onView(await this.#options.api.get())
+    } catch (error) {
+      this.#options.onFailure(error)
+    }
   }
 
   stop(): void {
