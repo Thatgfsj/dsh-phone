@@ -9,7 +9,7 @@
 
 ## 版本与状态
 
-**v0.4.0（已发布）**：**生命周期控制 + 肥鱼手机定制**——面板/设置页可「启动 / 停止 / 重启」，外部 `kill -9` 后 **2s 内**变「已停止/被外部关闭」并给出一键重启；区分 owned（插件拉起的实例，关闭会保存快照）与 adopted（你自己的模拟器，停止只断开）。新增 `system/` 定制层，可把实例变成「大肥鱼的手机」：中文、空白桌面、双壁纸轮换、无 YouTube（实机验证 1080x2400）。发布说明见 [CHANGELOG.md](CHANGELOG.md#v040---2026-10-27)，验收状态见 [docs/verification.md](docs/verification.md)。
+**v0.4.0（已发布）**：**生命周期控制 + 肥鱼手机定制**——面板/设置页可「启动 / 停止 / 重启」，外部 `kill -9` 后 **2s 内**变「已停止/被外部关闭」并给出一键重启；区分 owned（插件拉起的实例，关闭会保存快照）与 adopted（你自己的模拟器，停止只断开）。新增 `system/` 定制层，可把实例变成「大肥鱼的手机」：中文、空白桌面、双壁纸轮换。发布说明见 [CHANGELOG.md](CHANGELOG.md#v040---2026-10-27)，验收状态见 [docs/verification.md](docs/verification.md)。
 
 - 需求原文：[docs/SPEC.md](docs/SPEC.md)（**禁止改写**）。实现与需求的差异、未验证项见 [docs/host.md](docs/host.md)、[docs/runtime.md](docs/runtime.md)、[docs/stream.md](docs/stream.md)、[docs/client.md](docs/client.md)。
 - 集成点校准（DSH 0.2.1-rc.2 本机源码证据）：[docs/calibration.md](docs/calibration.md)；架构与协议契约：[docs/architecture.md](docs/architecture.md)、[docs/protocol.md](docs/protocol.md)。
