@@ -42,12 +42,14 @@ export function describePanelLayout(width: number): PanelLayout {
 }
 
 /** Which overlay the stage shows above the canvas. */
-export type StageView = 'canvas' | 'connecting' | 'booting' | 'error'
+export type StageView = 'canvas' | 'connecting' | 'booting' | 'error' | 'stopped'
 
 export interface StageViewInput {
   status: StreamState
   /** True while the Host reports state=booting (progress poller running). */
   booting: boolean
+  /** Host reports the runtime as stopped (no instance / external kill). */
+  runtimeStopped?: boolean
   /** Decoder/stream error copy, if any. */
   error?: string
 }
@@ -58,6 +60,7 @@ export interface StageViewInput {
  * ready stream hides the overlay entirely.
  */
 export function describeStageView(input: StageViewInput): StageView {
+  if (input.runtimeStopped === true) return 'stopped'
   if (input.error !== undefined) return 'error'
   if (input.booting) return 'booting'
   if (input.status === 'ready') return 'canvas'

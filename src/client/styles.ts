@@ -5,6 +5,7 @@
  */
 import { SETTINGS_CSS } from './styles-settings.ts'
 import { PROVISION_CSS } from './styles-provision.ts'
+import { RUNTIME_CSS } from './styles-runtime.ts'
 export const PANEL_CSS = `
 .dshp-root {
   container-type: inline-size;
@@ -263,4 +264,4 @@ export const PANEL_CSS = `
 }
 `
 
-export const CLIENT_CSS = PANEL_CSS + SETTINGS_CSS + PROVISION_CSS
+export const CLIENT_CSS = PANEL_CSS + SETTINGS_CSS + PROVISION_CSS + RUNTIME_CSS
