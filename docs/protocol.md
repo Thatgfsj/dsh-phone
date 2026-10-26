@@ -31,6 +31,7 @@
 | POST | `/dsh-phone/api/provision` | `{ runtime:'emulator'|'redroid'|'attach', image?:'google_apis'|'aosp_atd' }` | `ProvisionStatus`（仅浏览器同源；见 §1.4） |
 | GET | `/dsh-phone/api/runtime` | — | `RuntimeInfo`（见 §1.5） |
 | POST | `/dsh-phone/api/runtime` | `{ action:'start'|'stop'|'restart' }` | **202** 扁平体 `{ ok:true, action, state }`（异步执行，UI 轮询 GET /runtime） |
+| POST | `/dsh-phone/api/action` | `{ action:'app-drawer' }` | **200** 扁平体 `{ ok:true }`；错误 409 `E_APP_DRAWER_UNAVAILABLE` / `E_LIFECYCLE_BUSY`（见 §1.6） |
 | GET | `/dsh-phone/api/screenshot` | — | PNG 字节（`image/png`，非 JSON 包装） |
 
 说明：
@@ -95,6 +96,22 @@ interface RuntimeInfo {
 - 错误码：`E_START_FAILED` / `E_STOP_FAILED` / `E_RESTART_FAILED` / `E_LIFECYCLE_BUSY`
   （动作失败体现在 `lastError`；HTTP 动作本身仍 202，UI 轮询判定）。
 - **GET /status 兼容**：原 `PhoneStatus` 字段不变，新增可选 `owned/adopted/pid/since`（见 §1.1）。
+
+### 1.6 面板动作 API（issue #100）
+
+`POST /dsh-phone/api/action`，body `{ action: 'app-drawer' }`（目前仅此一个；home/recents 预留）：
+
+- **固定命令**（不接受任何用户输入/拼接）：
+  `am start -n com.dafeiyu.shell/.DrawerActivity --activity-single-top`，**5s 超时**；
+- 前置 `ensureRunning()`；首次使用守卫 pending/declined 时返回 200 结构化 `E_ONBOARDING_*`（不碰设备）；
+- 鉴权：浏览器同源与 **agent token 均允许**（固定命令无注入面）；
+- 成功 **200** 扁平体 `{ ok:true }`（不套 `value`，issue #100 冻结）；
+- 错误：
+  - **409 `E_APP_DRAWER_UNAVAILABLE`**：Activity 不存在/未装定制/启动失败/超时；message 提示运行
+    `system/provision-device.sh` 或更新肥鱼手机定制；超时 retryable=true，未安装 retryable=false；
+  - **409 `E_LIFECYCLE_BUSY`**：生命周期动作或另一个面板动作正在执行（消息含稍后重试）；
+  - 400 `E_BAD_REQUEST`：非法/未知 action。
+- 若需扩展动作（home/recents），必须新增**固定命令常量**，不允许把 action 直接映射为字符串命令。
 
 ### 1.2 首次使用守卫（onboarding，issue #30）
 
@@ -242,7 +259,8 @@ interface ProvisionStatus {
 | `E_STOP_FAILED` | 动作结果（GET /runtime lastError） | true | 停止实例失败（取消启动/保存快照/杀进程失败） |
 | `E_START_FAILED` | 动作结果（GET /runtime lastError） | true | 启动动作失败 |
 | `E_RESTART_FAILED` | 动作结果（GET /runtime lastError） | true | 重启动作失败 |
-| `E_LIFECYCLE_BUSY` | 动作结果（GET /runtime lastError） | true | 生命周期动作队列繁忙（正常由队列串行化，不应出现） |
+| `E_LIFECYCLE_BUSY` | 409（POST /action）/ 动作结果（GET /runtime lastError） | true | 生命周期动作队列/面板动作繁忙 |
+| `E_APP_DRAWER_UNAVAILABLE` | 409（POST /action） | 视原因 | 应用抽屉不可用：DrawerActivity 未安装/启动失败/超时；提示运行 provision-device.sh |
 | `E_STREAM_START_FAILED` | WS error | true | scrcpy server 启动/推包失败 |
 | `E_STREAM_IDLE` | close 1011 | true | 60s 未收到客户端消息（半开连接） |
 | `E_STREAM_BACKPRESSURE` | close 1011 | true | WS 发送积压超限（keyframe/config 无法安全丢弃） |

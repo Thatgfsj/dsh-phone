@@ -36,7 +36,7 @@ export interface DeviceOps {
   key(name: string): Promise<void>
   appLaunch(pkg: string): Promise<void>
   dumpUi(): Promise<string>
-  shell(command: string): Promise<string>
+  shell(command: string, options?: { timeoutMs?: number }): Promise<string>
 }
 
 export interface StreamSink {

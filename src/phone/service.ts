@@ -358,10 +358,10 @@ export class PhoneService implements PhoneOperations {
     })
   }
 
-  shell(command: string): Promise<string> {
+  shell(command: string, timeoutMs?: number): Promise<string> {
     return this.#serial(async () => {
       await this.ensureRunning()
-      return this.#requireDevice().shell(command)
+      return this.#requireDevice().shell(command, timeoutMs === undefined ? undefined : { timeoutMs })
     })
   }
 

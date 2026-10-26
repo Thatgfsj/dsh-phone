@@ -66,7 +66,7 @@ export interface PhoneOperations {
   inputText(text: string): Promise<void>
   appLaunch(pkg: string): Promise<void>
   dumpUi(): Promise<string>
-  shell(command: string): Promise<string>
+  shell(command: string, timeoutMs?: number): Promise<string>
   /**
    * scrcpy 触摸注入（面板手势）。注意与 runtime `PhoneLifecycle.touch()`
    *（idle 唤醒信号）**不同名不同义**：host 侧统一叫 `touchScreen`，避免混淆。
