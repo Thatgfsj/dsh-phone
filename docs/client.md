@@ -294,6 +294,83 @@ min-content 宽度只有 1 个字。重构后：
 5. 设置页同一组入口行为一致；错误态始终有「重新检测」按钮。
 6. 卸载/重载插件：owned 实例不再遗留（Host 侧 dispose 语义，#83 验收）；adopted 不受影响。
 
+### 4.5 生命周期交互验收清单（issue #92）
+
+对应 #83 客户端独立验收；实现见 §4.4。真实 emulator 环境按下列步骤执行，结果填入 §4.5.9 汇总表。
+
+**证据口径**：每条记录 开始/结束毫秒时间戳、操作截图、`GET /dsh-phone/api/runtime` 前后 JSON、Host 日志相关行。
+UI 反映终止状态的时间 = 操作/终止时刻 → 面板出现 stopped/外部关闭提示（含一次轮询，空闲轮询 3s）。
+
+#### 4.5.1 A. 外部 kill 兜底（P0，目标 ≤3s）
+
+1. 冷启动至 running，记录 pid（`GET /api/runtime` 的 pid 或 `pgrep -f qemu`）。
+2. `kill -9 <pid>` 同时开始计时。
+3. ≤3s 内 stage 显示「手机已被外部关闭」/「手机已停止」+ lastError（外部关闭/pid/端口）；停止按钮消失，出现「启动手机」「重新检测」。
+4. 点「启动手机」→ 进度 → running 恢复。
+5. 对照：booting 中 kill -9 → 同样 ≤3s 进入 stopped，不无限转圈，可再次启动。
+
+#### 4.5.2 B. owned 实例「关闭手机」（P0，破坏性防呆）
+
+1. owned=true 运行中，按钮文案「关闭手机」。
+2. 点击出现确认（说明先保存快照再退出）；取消 → 无请求、状态不变。
+3. 确认 → 「正在停止…」且按钮禁用；完成后 stopped + 消息条「已停止」。
+4. emulator 进程退出、AVD 快照目录 mtime 更新；再次启动耗时明显低于首次冷启动。
+
+#### 4.5.3 C. adopted 实例「断开连接」（P0，不杀用户进程）
+
+1. 用户自己启动 emulator 并 attach；`GET /api/runtime` 为 owned=false/adopted=true。
+2. 文案为「断开连接」，确认说明「实例由你启动，不会被关闭」。
+3. 确认 → 断流/断开连接、状态 stopped；**用户进程仍在**、端口仍可连；重新启动/连接可恢复。
+
+#### 4.5.4 D. 重启与动作进度（P0/P1）
+
+1. running 点「重启」：先停后启；期间按钮禁用 +「正在重启…」/booting 进度；完成 running +「重启完成」。
+2. booting 中点「停止」：取消启动并快速 stopped，无残留进程；booting 中点「重启」：取消再启动，最终 running 或可读错误。
+3. 失败注入：面板显示可读错误 + 「重试」「重新检测」；lastError 含 E_START_FAILED/E_STOP_FAILED/E_RESTART_FAILED/E_LIFECYCLE_BUSY 前缀且有对应中文文案。
+4. 快速连点 restart/stop：同动作合并、不同动作排队，busy 期间按钮禁用，最终状态与最后意图一致。
+
+#### 4.5.5 E. 设置页一致性（P0）
+
+1. 设置→手机「运行与生命周期」与面板同一组动作；状态/所有权/endpoint|pid 与 `GET /api/runtime` 一致。
+2. 设置页执行关闭/重启/重新检测，另一处面板 ≤3s 同步；adopted 显示「断开连接」+所有权说明，owned 显示「关闭手机」。
+3. 错误态设置页同样始终有「重新检测」，无纯文本死路。
+
+#### 4.5.6 F. 双页 / 多面板（P1）
+
+1. 同一会话两个标签页都能看到生命周期按钮；动作轮询互不影响（#81 双页互踢只针对视频流）。
+2. A 页点停止：B 页 ≥3s 内 busy→stopped（最多 1s 动作轮询 + 3s 空闲节流），且非操作页按钮禁用并显示「另一页面正在执行操作…」。
+3. 两页同时点重启：Host 队列串行/合并，无重复 stop 或状态回跳。
+4. 关闭其中一页：另一页不受影响。
+
+#### 4.5.7 G. 卸载 / 重载 / 禁用 / 旧 Host（P0）
+
+1. owned running 时重载插件：Host dispose ≤5s 停止 owned（保存快照），无孤儿进程/端口释放；重载后 runtime stopped。
+2. adopted running 时重载：只断开，用户进程仍在，可重新 adopt。
+3. 重载期间 UI 显示不可用/重新检测，完成后可操作，不白屏。
+4. 插件 enabled=false / 旧 Host 无 `/api/runtime`（404）：显示「不支持生命周期控制」+「重新检测」，不黑屏。
+
+#### 4.5.8 H. 文案与无障碍（P1）
+
+1. owned/adopted 动作与确认文案不混用，语义符合 protocol §1.5。
+2. 按钮 title/aria-label 完整、Tab 可聚焦、破坏性按钮 danger 视觉。
+3. 320/400/600px 三档 header 动作不竖排/不溢出（复用 §4.3 清单）。
+4. 明暗主题下按钮/消息条/danger 色可读。
+
+#### 4.5.9 结果汇总表
+
+| ID | 结果 | 观察时间(ms) | 证据链接 | 备注 |
+|---|---|---|---|---|
+| A1–A5 | | | | |
+| B1–B4 | | | | |
+| C1–C3 | | | | |
+| D1–D4 | | | | |
+| E1–E3 | | | | |
+| F1–F4 | | | | |
+| G1–G4 | | | | |
+| H1–H4 | | | | |
+
+单元测试覆盖：`tests/client/lifecycle-acceptance.test.ts`（外部 kill 视图/stopped 覆盖层、空闲 3s 轮询、owned vs adopted 文案与确认、busy 双页禁用、restart 1s 轮询、dispose/404 降级、文案齐全、动作完成/错误码映射）。
+
 ## 5. 首次使用引导（onboarding，issue #31）
 
 配合 Host 侧 onboarding 守卫（issue #30）。契约：
@@ -378,6 +455,7 @@ booting 进度分段/百分比/超时文案与轮询器生命周期（假 clock/
 provisioning 状态解析/步骤映射/日志截断、pending→running→done/failed 轮询器生命周期（假 clock/status）、
 停止轮询/409 依赖/自动启用判定/旧 Host 降级、POST body 与错误 envelope、
 生命周期：runtime 解析/所有权文案/动作可用性/外部关闭判定、动作 1s 与空闲 3s 轮询、stopped 空态优先级、错误码映射。
+另：lifecycle-acceptance 单测覆盖 stopped 覆盖层/外部 kill 轮询窗口/owned-adopted 确认文案/busy 双页禁用/dispose/404 降级/动作完成与 E_RESTART_FAILED·E_LIFECYCLE_BUSY 映射。
 
 ## 7. 未验证项（真实浏览器 / 真实 Host 待 task-8）
 1. WebCodecs 在 Chrome/Firefox/Safari 对 `avc.format='annexb'` + in-band SPS/PPS 的接受度；
@@ -402,3 +480,4 @@ provisioning 状态解析/步骤映射/日志截断、pending→running→done/f
 15. 一键准备 UI 依赖 Host #65（`/dsh-phone/api/provision`）；#65 合并前真实 Host 会 404 → UI 降级为手动命令（已单测），真实「点一次装完并启用」需 #8 在合并后验收。
 16. 「停止刷新」只停客户端轮询，契约没有 cancel 端点；后台 sdkmanager/avdmanager 可能继续执行（文案已说明）。
 17. 生命周期控制依赖 Host #83（`/dsh-phone/api/runtime`）；未合并时 UI 显示「不支持生命周期控制」+ 重新检测（已单测），kill -9/owned stop/adopted disconnect/重启/卸载语义需 #8 在合并后真机验收。
+18. §4.5 生命周期人工验收清单已落地；真实 emulator 的 kill -9/owned stop/adopted/重启/双页/卸载执行证据仍需在合并后的 Host 上采集（#8 或维护者）。

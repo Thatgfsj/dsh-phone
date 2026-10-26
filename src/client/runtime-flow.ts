@@ -17,6 +17,8 @@ export interface RuntimeUiView {
   view?: RuntimeView
   /** Host without the lifecycle API (older build) — show manual/info only. */
   available: boolean
+  /** Host reports an action in flight (from any page; used for dual-page disable). */
+  busy: boolean
   /** No instance: the stage shows the stopped overlay with a start button. */
   stopped: boolean
   /** The last error mentions an external kill (pid gone / port closed). */
@@ -44,6 +46,7 @@ export function describeRuntimeUi(view: RuntimeView | undefined, failure?: unkno
   if (view === undefined && failure !== undefined) {
     return {
       available: !isRuntimeUnsupported(failure),
+      busy: false,
       stopped: false,
       external: false,
       owned: false,
@@ -64,6 +67,7 @@ export function describeRuntimeUi(view: RuntimeView | undefined, failure?: unkno
   return {
     view,
     available: true,
+    busy: view?.busy === true,
     stopped: (view?.state ?? 'stopped') === 'stopped',
     external: (view?.state ?? 'stopped') === 'stopped' && isExternalStop(view?.lastError),
     owned: ownership === 'owned',
@@ -104,9 +108,28 @@ export function runtimeErrorKey(error: unknown): string {
   if (code === 'E_DEVICE_DISCONNECTED') return 'runtime.error.disconnected'
   if (code === 'E_STOP_FAILED') return 'runtime.error.stopFailed'
   if (code === 'E_START_FAILED') return 'runtime.error.startFailed'
+  if (code === 'E_RESTART_FAILED') return 'runtime.error.restartFailed'
+  if (code === 'E_LIFECYCLE_BUSY') return 'runtime.error.busy'
   if (code === 'E_TIMEOUT') return 'runtime.error.timeout'
   if (code === 'E_BAD_REQUEST') return 'runtime.error.badRequest'
   return 'runtime.error.generic'
+}
+
+/** i18n key for the success message after an action settles. */
+export function actionDoneKey(action: RuntimeAction): string {
+  switch (action) {
+    case 'start':
+      return 'runtime.done.start'
+    case 'stop':
+      return 'runtime.done.stop'
+    case 'restart':
+      return 'runtime.done.restart'
+  }
+}
+
+/** A lifecycle action is running locally or reported busy by the Host. */
+export function isRuntimeBusy(hostBusy: boolean, localBusy: boolean): boolean {
+  return hostBusy || localBusy
 }
 
 export interface RuntimePollerOptions {

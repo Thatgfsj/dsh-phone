@@ -10,7 +10,7 @@ import type * as ReactNamespace from 'react'
 import type { Translate } from './i18n.ts'
 import type { RuntimeAction, RuntimeApi, RuntimeView } from './runtime-api.ts'
 import { isActionAvailable, stopConfirmKey } from './runtime-api.ts'
-import { RuntimePoller, describeRuntimeUi, runtimeErrorKey, runtimeStateKey } from './runtime-flow.ts'
+import { RuntimePoller, actionDoneKey, describeRuntimeUi, isRuntimeBusy, runtimeErrorKey, runtimeStateKey } from './runtime-flow.ts'
 import { createRuntimeViews } from './runtime-views.ts'
 import type { RuntimeControllerLike } from './runtime-views.ts'
 
@@ -59,7 +59,7 @@ export function createRuntimeControls(deps: RuntimeControlsDeps): {
             lastActionRef.current = undefined
             setBusy(false)
             setAction(finished)
-            setMessage(t('runtime.done.' + finished))
+            setMessage(t(actionDoneKey(finished)))
             poller.setFast(false)
           }
         },
@@ -105,7 +105,7 @@ export function createRuntimeControls(deps: RuntimeControlsDeps): {
     return {
       ...ui,
       stateKey: runtimeStateKey(view),
-      busy: busy || ui.view?.busy === true,
+      busy: isRuntimeBusy(ui.busy, busy),
       action,
       error: error ?? failureCopy,
       message,

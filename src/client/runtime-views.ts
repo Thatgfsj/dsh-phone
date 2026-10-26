@@ -78,6 +78,9 @@ export function createRuntimeViews(deps: RuntimeViewsDeps): {
     return h(
       'div',
       { className: 'dshp-row dshp-runtime-actions' },
+      runtime.busy && runtime.action === undefined
+        ? h('span', { className: 'dshp-badge' }, t('runtime.busy.remote'))
+        : null,
       button(
         'restart',
         busyLabel(runtime, 'restart', t('runtime.action.restart')),
@@ -148,6 +151,9 @@ export function createRuntimeViews(deps: RuntimeViewsDeps): {
         t('runtime.stateLabel') + ': ' + (runtime.available ? t(runtime.stateKey) : t('runtime.state.unknown')),
       ),
       h('p', { className: 'dshp-text dshp-text--left dshp-note' }, t(ownershipKey)),
+      runtime.busy && runtime.action === undefined
+        ? h('p', { className: 'dshp-text dshp-text--left dshp-hint' }, t('runtime.busy.remote'))
+        : null,
       runtime.identity === undefined
         ? null
         : h('p', { className: 'dshp-text dshp-text--left dshp-hint' }, runtime.identity),
