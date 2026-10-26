@@ -399,3 +399,98 @@ test('locateSdkTools：avdmanager 同目录 sdkmanager / PATH 兜底 / 缺失', 
   })
   assert.equal(missing, undefined)
 })
+/* ------------------- issue #88：肥鱼手机定制 step=customize ------------------- */
+
+function customizeDeps(overrides: Partial<ProvisionDeps> = {}, runner = new FakeRunner()): {
+  deps: ProvisionDeps
+  runner: FakeRunner
+  waits: boolean[]
+} {
+  const waits: boolean[] = []
+  const base = makeDeps(overrides, runner)
+  return {
+    deps: {
+      ...base.deps,
+      fileExists: async (path) => path.endsWith('/system/provision-device.sh'),
+      waitForBootCompleted: async () => {
+        waits.push(true)
+        return true
+      },
+      ...overrides,
+    },
+    runner,
+    waits,
+  }
+}
+
+function stepOrder(runner: FakeRunner): string[] {
+  const labels: string[] = []
+  for (const call of runner.calls) {
+    if (call.args.includes('--install')) labels.push('install')
+    else if (call.args.some((arg) => arg.includes('--licenses'))) labels.push('licenses')
+    else if (call.args.includes('create')) labels.push('avd')
+    else if (call.file === 'bash') labels.push('customize')
+  }
+  return labels
+}
+
+test('emulator 步骤顺序：install → licenses → avd → customize → verify(boot_completed)', async () => {
+  const { deps, runner, waits } = customizeDeps()
+  const provisioner = new Provisioner(deps)
+  await startAndWait(provisioner, { runtime: 'emulator' })
+  assert.deepEqual(stepOrder(runner), ['install', 'licenses', 'avd', 'customize'])
+  assert.equal(provisioner.status().state, 'done')
+  assert.equal(waits.length, 1, '脚本 reboot 后必须等待 boot_completed')
+  const customizeCall = runner.calls.find((call) => call.file === 'bash')!
+  assert.ok(customizeCall.args[0]!.endsWith('/system/provision-device.sh'), '固定路径执行包内脚本')
+  assert.equal(customizeCall.timeoutMs, 180_000, '定制脚本超时 180s')
+  assert.match(provisioner.status().log.join('\n'), /定制脚本执行完成/)
+})
+
+test('定制脚本缺失：跳过并 log，不失败、不执行 bash', async () => {
+  const { deps, runner } = customizeDeps({ fileExists: async () => false })
+  const provisioner = new Provisioner(deps)
+  await startAndWait(provisioner, { runtime: 'emulator' })
+  assert.equal(provisioner.status().state, 'done')
+  assert.equal(runner.calls.filter((call) => call.file === 'bash').length, 0)
+  assert.match(provisioner.status().log.join('\n'), /跳过肥鱼手机定制/)
+})
+
+test('定制脚本失败：state=done + log 警告（不影响准备完成）', async () => {
+  const { deps, runner } = customizeDeps()
+  runner.on((call) => {
+    if (call.file === 'bash') {
+      return { code: 1, stdout: '', stderr: 'customize script exploded', timedOut: false }
+    }
+    return undefined
+  })
+  const provisioner = new Provisioner(deps)
+  await startAndWait(provisioner, { runtime: 'emulator' })
+  assert.equal(provisioner.status().state, 'done')
+  const log = provisioner.status().log.join('\n')
+  assert.match(log, /警告: 肥鱼手机定制失败/)
+  assert.match(log, /customize script exploded/)
+})
+
+test('boot_completed 等待超时：只警告，仍 done', async () => {
+  const { deps } = customizeDeps()
+  deps.waitForBootCompleted = async () => false
+  const provisioner = new Provisioner(deps)
+  await startAndWait(provisioner, { runtime: 'emulator' })
+  assert.equal(provisioner.status().state, 'done')
+  assert.match(provisioner.status().log.join('\n'), /等待 boot_completed 超时/)
+})
+
+test('已装 AVD 快速 done：不跑 customize（避免重复改机）', async () => {
+  const { deps, runner } = customizeDeps()
+  runner.on((call) => {
+    if (call.args.includes('list') && call.args.includes('avd')) {
+      return ok({ stdout: 'dsh-phone-avd\n' })
+    }
+    return undefined
+  })
+  const provisioner = new Provisioner(deps)
+  await startAndWait(provisioner, { runtime: 'emulator' })
+  assert.equal(provisioner.status().state, 'done')
+  assert.equal(runner.calls.filter((call) => call.file === 'bash').length, 0)
+})

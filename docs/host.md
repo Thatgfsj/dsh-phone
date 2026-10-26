@@ -278,6 +278,11 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
   只创建/复用 `dsh-phone-avd`，不修改其它 AVD、不装 Docker、不改配置。
 - **幂等/并发**：running 时返回当前状态，不重复执行；done 且同 runtime 直接返回；failed 可重试。
 - **emulator 已装好**：`avdmanager list avd` 已有 `dsh-phone-avd` → 快速 done（不重跑下载）。
+- **肥鱼手机定制（issue #88，仅 emulator）**：AVD ready 后新增 `step=customize`：包内固定路径
+  `system/provision-device.sh` 存在则用 `bash <pkg>/system/provision-device.sh` 执行（无参数、180s 超时、
+  stdout/stderr 入 provision log）；缺失 → 跳过 + log（不失败）；失败 → log 警告但 **state=done**（done+warn）。
+  随后 `step=verify` 等待 `sys.boot_completed`（默认 emulator 端口 127.0.0.1:5555，≤180s；超时仅警告）。
+  只执行包内固定脚本、不接受外部路径；`package.json files` 已包含 `system/`。
 - **redroid**：只检查 `docker version` + `/dev/binder`；缺失 → failed，log 附 `redroidCommands()` 手动命令。
 - **attach**：只调 `PhoneService.verifyEndpoint` 校验当前 endpoint（不落盘）；空 endpoint → failed。
 - 进程清理：命令通过 runtime `CommandRunner.run` 执行（`execFile` + `timeoutMs`，超时 SIGKILL）；
@@ -348,6 +353,9 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
    形态（IPv4-mapped 等），也未验证卸载后 token 文件确实被删除。
 9. **`x-dsh-phone-token` 与同源 cookie 并存**：token 缺失但同源 cookie 有效时走普通 requestRejection
    分支放行（与浏览器 `POST /config` 等价），该分支只做了单测。
+13. **肥鱼定制真机端到端**：`system/provision-device.sh` 由 #87 提供；本机未对真实 emulator 跑
+    「spawn → customize → reboot → boot_completed」全流程（脚本存在时由假 runner/假 waiter 单测）。
+    默认端口以外的 emulator 无法完成 boot_completed 等待（会记录警告，不影响 done）。
 12. **生命周期动作真机端到端**：外部 kill 后看门狗对账、stop owned（保存快照）/adopted（只断开）、
     booting 取消启动由 runtime #83 实现与验证；host 侧用 fake service 覆盖队列/鉴权/错误映射，未在真实
     emulator 上跑「kill → 2s 内 stopped → start/restart」；client #84 的防呆 UI 不在本 PR。
@@ -381,5 +389,5 @@ Host 单测（`tests/host/`，不依赖真机）：
 | `shell-policy.test.ts` | 注册级：tools/pre-execute 捕获并断言白名单 next / 非白名单 ask |
 | `onboarding.test.ts` | pending/declined/accepted 守卫、step/options/install/docs 结构、effectiveRuntime、旧配置 normalize |
 | `wiring.test.ts` | `readOnboarding` 与 `readServiceConfig`：accepted+choice 等价显式 runtime、pending 仍 auto |
-| `provision.test.ts` | 假 CommandRunner：emulator 成功/已装快速 done/aosp_atd 镜像/磁盘不足/断网/许可失败/AVD 创建失败/重复/并发/超时/redroid/attach/进度；命令构建器与 locateSdkTools |
+| `provision.test.ts` | 假 CommandRunner：emulator 成功/已装快速 done/aosp_atd 镜像/磁盘不足/断网/许可失败/AVD 创建失败/重复/并发/超时/redroid/attach/进度；**customize 顺序/缺失跳过/失败 done+warn/boot_completed 超时**；命令构建器与 locateSdkTools |
 | `lifecycle-control.test.ts` | info 映射、start/stop/restart 能力探测与回退、单队列互斥/busy、错误码 lastError、dispose |

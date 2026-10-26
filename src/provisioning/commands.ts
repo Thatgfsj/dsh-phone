@@ -4,6 +4,9 @@
  * 全部参数固定（包名/镜像/AVD 名/设备），不接受用户输入拼接；
  * 安装文案与 AVD/镜像常量复用 `src/runtime/install-guide.ts`（#38 单一数据源）。
  */
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { AVD_NAME, EMULATOR_PACKAGE, SYSTEM_IMAGE } from '../runtime/install-guide.ts'
 import type { Platform } from '../runtime/types.ts'
 import type { ProvisionImage, SdkTools } from './types.ts'
@@ -12,6 +15,26 @@ export type { SdkTools } from './types.ts'
 import { PROVISION_LOG_LIMIT, systemImageFor } from './types.ts'
 
 export const AVD_DEVICE = 'pixel_5'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+
+/**
+ * 包内定制脚本的**固定路径**（issue #88）：src/provisioning 与 lib/provisioning 到包根距离相同。
+ * 仅执行这一个文件，不接受外部路径；不存在时由 service 跳过。
+ */
+export function customizeScriptPath(): string {
+  return resolve(HERE, '..', '..', 'system', 'provision-device.sh')
+}
+
+/** 肥鱼手机定制脚本执行命令（固定参数、无用户输入、180s 超时）。 */
+export function customizeCommand(scriptPath = customizeScriptPath()): CommandSpec {
+  return {
+    file: 'bash',
+    args: [scriptPath],
+    timeoutMs: 180_000,
+    display: 'bash system/provision-device.sh',
+  }
+}
 
 export interface CommandSpec {
   file: string
