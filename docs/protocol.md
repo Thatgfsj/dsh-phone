@@ -120,7 +120,7 @@ interface RuntimeInfo {
 ```ts
 interface ProvisionStatus {
   state: 'idle' | 'running' | 'done' | 'failed'
-  step: string        // precheck / locate / install / licenses / avd / verify / done / failed
+  step: string        // precheck / locate / install / licenses / avd / customize / verify / done / failed
   percent: number     // 0–100（阶段估算；sdkmanager 输出含百分比时用于校正）
   log: string[]       // 最近 50 行（命令、输出摘要、错误、redroid 手动命令）
   error?: string      // state=failed 时
@@ -133,8 +133,14 @@ interface ProvisionStatus {
   runtime 相同直接返回；`failed` 或换 runtime 时重新开跑。
 - **emulator**：`sdkmanager --install emulator <system-image>` → `sdkmanager --licenses`（stdin 恒 yes）→
   `avdmanager create avd -n dsh-phone-avd -k <system-image> -d pixel_5 --force`（仅当 AVD 不存在；
-  已有 AVD 时快速 done，不重跑下载）。`image` 默认 `google_apis`（`system-images;android-34;google_apis;x86_64`），
-  可选 `aosp_atd` 快启动镜像。
+  已有 AVD 时快速 done，不重跑下载）→ **customize**（issue #88）→ **verify**。`image` 默认 `google_apis`
+  （`system-images;android-34;google_apis;x86_64`），可选 `aosp_atd` 快启动镜像。
+- **customize（issue #88，仅 emulator）**：AVD ready 后执行**包内固定路径** `system/provision-device.sh`
+  （`bash <pkg>/system/provision-device.sh`，无参数、180s 超时、stdout/stderr 入 provision log）。
+  脚本不存在 → 跳过并 log，不失败；执行失败 → log 警告但 **state 仍 done**（done+warn，不自动重试）。
+  脚本会 reboot，Host 随后 **verify**：通过 Tango ADB 轮询默认 emulator 端口 `127.0.0.1:5555` 的
+  `getprop sys.boot_completed`（≤180s）；超时只警告不失败。非默认端口时该校验会跳过/超时（见 host.md 未验证项）。
+  插件**不会**接受外部脚本路径；`package.json files` 包含 `system/` 以随 tarball 分发。
 - **redroid**：只检查 `docker version` 与 `/dev/binder`；不安装 Docker，缺失时 `state=failed` 且 `log`
   含来自 `src/runtime/install-guide.ts`（#38 单一数据源）的手动命令。
 - **attach**：只校验当前 `attach.endpoint`（connect + getprop，不落盘）；成功 `done`，失败 `failed`。

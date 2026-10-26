@@ -12,6 +12,8 @@ import { AVD_NAME, emulatorCommands, redroidCommands } from '../runtime/install-
 import {
   avdCreateCommand,
   avdListCommand,
+  customizeCommand,
+  customizeScriptPath,
   locateSdkTools,
   outputToLogLines,
   parseProgressPercent,
@@ -55,8 +57,9 @@ const STAGE_PRECHECK: Omit<Stage, 'startedAt'> = { step: 'precheck', start: 0, e
 const STAGE_LOCATE: Omit<Stage, 'startedAt'> = { step: 'locate', start: 5, end: 10, estimateMs: 3_000 }
 const STAGE_INSTALL: Omit<Stage, 'startedAt'> = { step: 'install', start: 10, end: 70, estimateMs: 6 * 60_000 }
 const STAGE_LICENSES: Omit<Stage, 'startedAt'> = { step: 'licenses', start: 70, end: 80, estimateMs: 60_000 }
-const STAGE_AVD: Omit<Stage, 'startedAt'> = { step: 'avd', start: 80, end: 100, estimateMs: 60_000 }
-const STAGE_VERIFY: Omit<Stage, 'startedAt'> = { step: 'verify', start: 10, end: 100, estimateMs: 30_000 }
+const STAGE_AVD: Omit<Stage, 'startedAt'> = { step: 'avd', start: 80, end: 90, estimateMs: 60_000 }
+const STAGE_CUSTOMIZE: Omit<Stage, 'startedAt'> = { step: 'customize', start: 90, end: 97, estimateMs: 60_000 }
+const STAGE_VERIFY: Omit<Stage, 'startedAt'> = { step: 'verify', start: 97, end: 100, estimateMs: 180_000 }
 
 function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)))
@@ -205,6 +208,52 @@ export class Provisioner implements ProvisionerLike {
     } else {
       this.#append('AVD ' + AVD_NAME + ' 已存在，跳过创建')
     }
+
+    this.#assertAlive()
+    await this.#customize()
+    this.#assertAlive()
+    await this.#verifyBoot()
+  }
+
+  /**
+   * issue #88：AVD ready 后应用包内肥鱼定制脚本（system/provision-device.sh）。
+   * - 固定路径、固定参数、幂等；超时 180s；
+   * - 脚本缺失 → 跳过并 log（不失败）；
+   * - 执行失败 → log 警告但**不影响 done**（issue #88 选择 done+warn）。
+   */
+  async #customize(): Promise<void> {
+    this.#setStage(STAGE_CUSTOMIZE)
+    const scriptPath = customizeScriptPath()
+    const exists =
+      this.#deps.fileExists === undefined ? false : await this.#deps.fileExists(scriptPath)
+    if (!exists) {
+      this.#append('未找到 ' + scriptPath + '，跳过肥鱼手机定制（不影响准备完成）')
+      return
+    }
+    const spec = customizeCommand(scriptPath)
+    this.#append('应用肥鱼手机定制：' + spec.display)
+    try {
+      const result = await this.#runCommand(spec)
+      for (const line of outputToLogLines(result.stderr, 10)) this.#append(line)
+      this.#append('肥鱼手机定制脚本执行完成')
+    } catch (error) {
+      this.#append(
+        '警告: 肥鱼手机定制失败（不影响准备完成）: ' +
+          (error instanceof Error ? error.message : String(error)),
+      )
+    }
+  }
+
+  /** issue #88：定制脚本会 reboot，随后等待 sys.boot_completed；超时只警告不失败。 */
+  async #verifyBoot(): Promise<void> {
+    this.#setStage(STAGE_VERIFY)
+    if (this.#deps.waitForBootCompleted === undefined) {
+      this.#append('未提供 boot_completed 检查，跳过启动校验（不影响准备完成）')
+      return
+    }
+    this.#append('等待设备 boot_completed（重启后）…')
+    const ready = await this.#deps.waitForBootCompleted().catch(() => false)
+    this.#append(ready ? '设备 boot_completed，定制完成' : '警告: 等待 boot_completed 超时（不影响准备完成）')
   }
 
   async #provisionRedroid(): Promise<void> {

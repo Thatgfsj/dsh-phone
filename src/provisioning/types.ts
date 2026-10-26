@@ -90,6 +90,10 @@ export interface ProvisionDeps {
   getAttachEndpoint(): string
   /** 可注入时钟（进度估算与测试）。 */
   now?(): number
+  /** 包内文件是否存在（默认 fs.access；测试注入）。 */
+  fileExists?(path: string): Promise<boolean>
+  /** 定后脚本 reboot 之后等待 sys.boot_completed（默认 adb 轮询；测试注入）。 */
+  waitForBootCompleted?(): Promise<boolean>
 }
 
 /** 供 HTTP 层调用（避免 routes 依赖具体实现）。 */
