@@ -8,7 +8,7 @@
 
 | 路径 | 说明 |
 |---|---|
-| `wallpapers/111.jpg`、`wallpapers/222.jpg` | 用户提供的壁纸（压缩裁切到 720x1280） |
+| `wallpapers/111.png`、`wallpapers/222.png` | 用户提供的壁纸（压缩裁切到 720x1280） |
 | `feiyu-shell/` | 极简空白 HOME app 源码（Java）+ `build.sh` + 构建好的 `feiyu-shell.apk` |
 | `provision-device.sh` | 一键定制/重复执行（幂等）：壁纸、装 app、设 HOME、删 YouTube、中文、重启、校验、截图 |
 | `avd-config.ini` | 推荐 AVD 配置（device profile `medium_phone` 与关键项） |
@@ -16,7 +16,7 @@
 ## 来源与许可
 
 - **壁纸**：用户提供，原文件路径
-  `~/Downloads/111.jpg`、`~/Downloads/222.jpg`（由用户确认可用）；仓库内为 720x1280 压缩版
+  `~/Downloads/111.png`、`~/Downloads/222.png`（由用户确认可用）；仓库内为 720x1280 压缩版
   （`ffmpeg -vf "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280"`）。
   壁纸版权归用户/原作者，仅随本项目一起分发，不单独授权。
 - **系统镜像**：Google Android SDK（`android-34;google_apis;x86_64`，Apache-2.0/Google 条款），

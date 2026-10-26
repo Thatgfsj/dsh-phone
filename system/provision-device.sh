@@ -36,11 +36,15 @@ done
 
 step "推送壁纸到 $WALLPAPER_DIR（应用内也内置一份）"
 adbcmd shell mkdir -p "$WALLPAPER_DIR"
-adbcmd push "$HERE/wallpapers/111.jpg" "$WALLPAPER_DIR/111.jpg" >/dev/null
-adbcmd push "$HERE/wallpapers/222.jpg" "$WALLPAPER_DIR/222.jpg" >/dev/null
+adbcmd push "$HERE/wallpapers/111.png" "$WALLPAPER_DIR/111.png" >/dev/null
+adbcmd push "$HERE/wallpapers/222.png" "$WALLPAPER_DIR/222.png" >/dev/null
 
 step "安装/更新 $APP_ID"
-adbcmd install -r -g "$APK" >/dev/null || adbcmd install -r "$APK" >/dev/null
+if ! adbcmd install -r -g "$APK" >/dev/null 2>&1; then
+  step "签名/版本冲突，卸载旧 app 后重装"
+  try adbcmd uninstall "$APP_ID"
+  adbcmd install -g "$APK" >/dev/null
+fi
 
 step "设置默认 HOME（优先 set-home-activity，回退禁用 NexusLauncher）"
 if ! adbcmd shell cmd package set-home-activity --user 0 "$HOME_ACTIVITY" >/dev/null 2>&1; then
@@ -75,22 +79,44 @@ step "校验"
 LOCALE="$(adbcmd shell getprop persist.sys.locale | tr -d '\r')"
 BOOT="$(adbcmd shell getprop sys.boot_completed | tr -d '\r')"
 PKG="$(adbcmd shell pm list packages "$APP_ID" | tr -d '\r')"
-YT="$(adbcmd shell pm list packages com.google.android.youtube | tr -d '\r' || true)"
-HOME_RESOLVED="$(adbcmd shell cmd package resolve-activity -c android.intent.category.HOME 2>/dev/null | grep -o "$APP_ID/[^ ]*" | head -1 || true)"
+HOME_RESOLVED="$(adbcmd shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/null | tr -d '\r' | tail -1)"
 SIZE="$(adbcmd shell wm size | tr -d '\r')"
+YT="$(adbcmd shell pm list packages com.google.android.youtube | tr -d '\r' || true)"
+YTM="$(adbcmd shell pm list packages com.google.android.apps.youtube.music | tr -d '\r' || true)"
+if [ -n "$YT" ]; then
+  step "YouTube 仍存在，重试卸载"
+  try adbcmd shell pm uninstall --user 0 com.google.android.youtube
+  YT="$(adbcmd shell pm list packages com.google.android.youtube | tr -d '\r' || true)"
+fi
 echo "  locale=$LOCALE  boot_completed=$BOOT"
 echo "  package=$PKG  home=$HOME_RESOLVED  wm=$SIZE"
-echo "  youtube=${YT:-<none>}"
+echo "  youtube=${YT:-<none>}  youtube-music=${YTM:-<none>}"
 
-step "截图（$SHOT_DIR）"
-SHOT1="$SHOT_DIR/feiyu-home-$(date +%H%M%S).png"
-adbcmd exec-out screencap -p > "$SHOT1"
-echo "  screenshot=$SHOT1"
-adbcmd shell am broadcast -a com.dafeiyu.shell.SET_WALLPAPER --ei index 1 >/dev/null
+step "唤醒并确保首页可见后再截图"
+adbcmd shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+adbcmd shell am start -a android.intent.action.MAIN -c android.intent.category.HOME >/dev/null 2>&1 || true
+for _ in $(seq 1 20); do
+  adbcmd shell dumpsys window 2>/dev/null | grep -q "mCurrentFocus.*$APP_ID" && break
+  sleep 1
+done
 sleep 2
-SHOT2="$SHOT_DIR/feiyu-wallpaper222-$(date +%H%M%S).png"
+STAMP="$(date +%H%M%S)"
+SHOT1="$SHOT_DIR/feiyu-home-111-$STAMP.png"
+adbcmd exec-out screencap -p > "$SHOT1"
+echo "  screenshot=$SHOT1  (壁纸 111 / 空白首页)"
+adbcmd shell am broadcast -n com.dafeiyu.shell/.SwitchReceiver -a com.dafeiyu.shell.SET_WALLPAPER --ei index 1 >/dev/null
+sleep 2
+SHOT2="$SHOT_DIR/feiyu-wallpaper-222-$STAMP.png"
 adbcmd exec-out screencap -p > "$SHOT2"
-echo "  screenshot=$SHOT2"
-adbcmd shell am broadcast -a com.dafeiyu.shell.SET_WALLPAPER --ei index 0 >/dev/null
+echo "  screenshot=$SHOT2  (壁纸 222)"
+step "中文界面截图（系统设置）"
+adbcmd shell am start -a android.settings.SETTINGS >/dev/null 2>&1 || true
+sleep 3
+SHOT3="$SHOT_DIR/feiyu-settings-zh-$STAMP.png"
+adbcmd exec-out screencap -p > "$SHOT3"
+echo "  screenshot=$SHOT3  (中文设置界面)"
+echo "  locale=$LOCALE"
+adbcmd shell am broadcast -n com.dafeiyu.shell/.SwitchReceiver -a com.dafeiyu.shell.SET_WALLPAPER --ei index 0 >/dev/null
+adbcmd shell am start -a android.intent.action.MAIN -c android.intent.category.HOME >/dev/null 2>&1 || true
 
 step "完成"

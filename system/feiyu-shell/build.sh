@@ -53,7 +53,8 @@ PY
 
 echo "[build] zipalign + apksigner"
 "$BUILD_TOOLS/zipalign" -f -p 4 "$OUT/base.apk" "$OUT/aligned.apk"
-KEYSTORE="$OUT/debug.keystore"
+KEYSTORE="$HOME/.android/feiyu-debug.keystore"
+mkdir -p "$(dirname "$KEYSTORE")"
 if [ ! -f "$KEYSTORE" ]; then
   "$KEYTOOL" -genkeypair -keystore "$KEYSTORE" -storepass android -keypass android \
     -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \

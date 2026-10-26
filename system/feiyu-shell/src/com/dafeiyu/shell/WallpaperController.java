@@ -14,7 +14,7 @@ import java.io.IOException;
 import java.io.InputStream;
 
 /**
- * 壁纸轮换（两张内置 assets：111.jpg / 222.jpg）。
+ * 壁纸轮换（两张内置 assets：111.png / 222.png）。
  * - 默认每 10 分钟切换一次（SET_INTERVAL 可改，0=关闭）；
  * - adb 广播 SET_WALLPAPER(index 0/1) 立即指定，SWITCH_WALLPAPER 立即切另一张；
  * - BootReceiver 开机设置一次。
@@ -33,7 +33,7 @@ public final class WallpaperController {
     public static final String EXTRA_INDEX = "index";
     public static final String EXTRA_MINUTES = "minutes";
 
-    private static final String[] ASSETS = {"111.jpg", "222.jpg"};
+    private static final String[] ASSETS = {"111.png", "222.png"};
 
     private WallpaperController() {}
 
