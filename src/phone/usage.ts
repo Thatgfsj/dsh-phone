@@ -8,7 +8,7 @@
  * 解析失败返回空对象（省略字段），调用方不得因此报错。
  */
 
-import type { ProcessUsage } from '../runtime/types.ts'
+import type { ProcessUsage, RuntimeKind } from '../runtime/types.ts'
 
 export const ATTACH_CPU_COMMAND = 'dumpsys cpuinfo'
 export const ATTACH_MEM_COMMAND = 'cat /proc/meminfo'
@@ -57,4 +57,56 @@ export function usageFromAttachOutputs(cpuText: string, memText: string): Proces
   if (cpuPct !== undefined) usage.cpuPct = cpuPct
   if (memPct !== undefined) usage.memPct = memPct
   return usage
+}
+
+
+/** attach 资源占用采样缓存（issue #56/#83，避免 /status 轮询频繁 shell）。 */
+const USAGE_CACHE_MS = 5_000
+
+export interface UsageSampleInput {
+  kind: RuntimeKind
+  runtimeStatus: { cpuPct?: number; memPct?: number } | undefined
+  device: { shell(command: string): Promise<string> } | undefined
+  state: string
+  busy: boolean
+  now: number
+}
+
+/** 资源占用采样器：runtime 已给就直接用；attach 走设备 shell，5s 缓存，失败静默省略。 */
+export class UsageSampler {
+  #usage: ProcessUsage | undefined
+  #usageAt = 0
+
+  reset(): void {
+    this.#usage = undefined
+    this.#usageAt = 0
+  }
+
+  async sample(input: UsageSampleInput): Promise<ProcessUsage> {
+    const fromRuntime: ProcessUsage = {}
+    if (input.runtimeStatus?.cpuPct !== undefined) fromRuntime.cpuPct = input.runtimeStatus.cpuPct
+    if (input.runtimeStatus?.memPct !== undefined) fromRuntime.memPct = input.runtimeStatus.memPct
+    if (fromRuntime.cpuPct !== undefined || fromRuntime.memPct !== undefined) return fromRuntime
+    if (input.state !== 'running') return {}
+    if (input.kind !== 'attach' || !input.device || input.busy) return {}
+    if (this.#usageAt !== 0 && input.now - this.#usageAt < USAGE_CACHE_MS) {
+      return this.#usage ?? {}
+    }
+    const usage = await this.#sampleAttach(input.device)
+    this.#usage = usage
+    this.#usageAt = input.now
+    return usage
+  }
+
+  async #sampleAttach(device: { shell(command: string): Promise<string> }): Promise<ProcessUsage> {
+    try {
+      const [cpuText, memText] = await Promise.all([
+        device.shell(ATTACH_CPU_COMMAND),
+        device.shell(ATTACH_MEM_COMMAND),
+      ])
+      return usageFromAttachOutputs(cpuText, memText)
+    } catch {
+      return {}
+    }
+  }
 }

@@ -37,11 +37,9 @@ import type {
   StopOptions,
   VerifyResult,
 } from './contracts.ts'
-import {
-  ATTACH_CPU_COMMAND,
-  ATTACH_MEM_COMMAND,
-  usageFromAttachOutputs,
-} from './usage.ts'
+import { ActionQueue, LifecycleGuard } from './control.ts'
+import type { ServiceActionName } from './control.ts'
+import { UsageSampler } from './usage.ts'
 
 import type {
   AdbConnectionLike,
@@ -75,13 +73,10 @@ export type {
   StreamSink,
 } from './service-types.ts'
 
-type ActionName = 'start' | 'stop' | 'restart'
 
 const DEFAULT_STREAM_GRACE_MS = 5_000
 /** viewer 存活期间的心跳（issue #73）：周期性 touch，idle 不应在有人观看时休眠。 */
 const VIEWER_HEARTBEAT_MS = 60_000
-/** attach 资源占用采样缓存（issue #56，避免 /status 轮询频繁 shell）。 */
-const USAGE_CACHE_MS = 5_000
 /**
  * boot 重试预算（issue #44）：给每次 connect 自身（最长 8s）留出余量，
  * 保证“延迟累计 + 最后一次尝试”不会先撞上 lifecycle 的 120s boot 超时。
@@ -123,19 +118,54 @@ export class PhoneService implements PhoneOperations {
   #disposed = false
   /** booting 进度阶段（issue #56）。 */
   #bootPhase: BootPhase | undefined
-  /** attach 资源占用采样缓存（issue #56）。 */
-  #usage: ProcessUsage | undefined
-  #usageAt = 0
+  /** attach 资源占用采样（issue #56/#83）。 */
+  readonly #usageSampler = new UsageSampler()
   /** issue #83：看门狗与动作用状态。 */
   #watchdogStop: (() => void) | undefined
   #lastRuntimeStatus: RuntimeStatus | undefined
-  #actionQueue: Promise<unknown> = Promise.resolve()
-  #actionInflight: { action: ActionName; promise: Promise<PhoneStatus> } | undefined
-  #actionToken = 0
+  readonly #actions: ActionQueue
+  readonly #guard: LifecycleGuard
   #disposing = false
 
   constructor(deps: PhoneServiceDeps) {
     this.#deps = deps
+    this.#actions = new ActionQueue({
+      timeoutMs: deps.actionTimeoutMs ?? 180_000,
+      makeTimeoutError: (action: ServiceActionName, timeoutMs: number) =>
+        new RuntimeError(
+          '动作 ' + action + ' 超时（' + timeoutMs + 'ms）',
+          action === 'stop' ? 'stop' : 'start',
+        ),
+    })
+    this.#guard = new LifecycleGuard({
+      intervalMs: deps.watchdogIntervalMs ?? 2000,
+      actionTimeoutMs: deps.actionTimeoutMs ?? 180_000,
+      disposeBudgetMs: deps.disposeBudgetMs ?? 5000,
+      setInterval: deps.setInterval,
+      currentState: () => this.#lifecycle.state,
+      now: () => this.#now(),
+      isDisposed: () => this.#disposed,
+      isDisposing: () => this.#disposing,
+      setDisposing: (value: boolean) => {
+        this.#disposing = value
+      },
+      currentAction: () => this.#actions.currentAction,
+      runtimeHandle: () => this.#handle,
+      adapterStatus: () => this.#adapterStatus(),
+      cacheStatus: (status: RuntimeStatus | undefined) => {
+        this.#lastRuntimeStatus = status
+      },
+      closeSessions: () => this.#closeSessions(),
+      disconnectAdb: () => this.#disconnectAdb(),
+      halt: (reason?: string) => this.#lifecycle.halt(reason),
+      stopNow: (reason?: string) => this.#lifecycle.stopNow(reason),
+      disposeLifecycle: () => this.#lifecycle.dispose(),
+      emitStatus: () => this.#emitStatus(),
+      clearTransientErrors: () => {
+        this.#handleError = undefined
+        this.#handleErrorAt = 0
+      },
+    })
     this.#now = deps.now ?? (() => Date.now())
     const config = deps.config()
     this.#configFingerprint = runtimeConfigFingerprint(config)
@@ -155,7 +185,7 @@ export class PhoneService implements PhoneOperations {
     )
     this.#lifecycle.onChange((status) => {
       this.#emit(status)
-      this.#syncWatchdog(status.state)
+      this.#guard.syncWatchdog(status.state)
     })
     void deps.platform().then(
       (platform) => {
@@ -193,7 +223,14 @@ export class PhoneService implements PhoneOperations {
     if (lifecycle.state === 'booting' && this.#bootPhase !== undefined) {
       status.phase = this.#bootPhase
     }
-    const usage = await this.#measureUsage(handle.detection.kind, runtimeStatus)
+    const usage = await this.#usageSampler.sample({
+      kind: handle.detection.kind,
+      runtimeStatus,
+      device: this.#device,
+      state: lifecycle.state,
+      busy: this.#serialPending > 0,
+      now: this.#now(),
+    })
     if (usage.cpuPct !== undefined) status.cpuPct = usage.cpuPct
     if (usage.memPct !== undefined) status.memPct = usage.memPct
     // issue #44：running 后不再展示历史启动/探测错误，避免误导；仅保留当前状态相关错误
@@ -243,7 +280,7 @@ export class PhoneService implements PhoneOperations {
 
   /** issue #83：显式启动（幂等；返回最终状态）。 */
   async start(): Promise<PhoneStatus> {
-    return this.#runAction('start', async () => {
+    return this.#actions.run('start', async () => {
       await this.ensureRunning()
       return this.status()
     })
@@ -251,13 +288,16 @@ export class PhoneService implements PhoneOperations {
 
   /** issue #83：停止（owned 保存快照等退出；adopted 只断开，不杀用户实例）。 */
   async stop(options: StopOptions = {}): Promise<PhoneStatus> {
-    return this.#runAction('stop', async () => this.#doStop(options))
+    return this.#actions.run('stop', async () => {
+      await this.#guard.stop(options)
+      return this.status()
+    })
   }
 
   /** issue #83：重启（先停后启；返回最终状态）。 */
   async restart(): Promise<PhoneStatus> {
-    return this.#runAction('restart', async () => {
-      await this.#doStop({ force: true })
+    return this.#actions.run('restart', async () => {
+      await this.#guard.stop({ force: true })
       await this.ensureRunning()
       return this.status()
     })
@@ -413,31 +453,10 @@ export class PhoneService implements PhoneOperations {
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
-    this.#disposing = true
-    this.#stopWatchdog()
     this.#cancelClose()
     this.#stopViewerHeartbeat()
-    const budget = this.#deps.disposeBudgetMs ?? 5000
-    const deadline = this.#now() + budget
-    const remaining = (): number => Math.max(1, deadline - this.#now())
-    const within = async (work: Promise<unknown>): Promise<unknown> =>
-      Promise.race([work.catch(() => undefined), this.#delay(remaining())])
-    const status = (await within(
-      Promise.race([this.#adapterStatus(), this.#delay(Math.min(1000, remaining()))]),
-    )) as RuntimeStatus | undefined
-    if (status?.owned === true) {
-      // owned：先尝试 stop（保存快照），但只在总预算内等
-      await within(this.#lifecycle.stopNow('插件卸载：已停止手机实例'))
-    } else {
-      await within(this.#closeSessions())
-      await within(this.#disconnectAdb())
-    }
-    await within(this.#closeSessions())
-    await within(this.#disconnectAdb())
-    await within(this.#lifecycle.dispose())
-    this.#stopWatchdog()
+    await this.#guard.dispose()
     this.#listeners.clear()
-    this.#disposing = false
   }
 
   /* ---------------------------------- 生命周期钩子 --------------------------------- */
@@ -576,8 +595,7 @@ export class PhoneService implements PhoneOperations {
 
   async #attachAdb(endpoint: Endpoint): Promise<void> {
     await this.#disconnectAdb()
-    this.#usage = undefined
-    this.#usageAt = 0
+    this.#usageSampler.reset()
     const connection = await this.#deps.connect(endpoint)
     this.#connection = connection
     this.#device = this.#deps.createDevice(connection)
@@ -862,181 +880,12 @@ export class PhoneService implements PhoneOperations {
    * （redroid docker stats / emulator /proc），attach 用设备 shell 采样并缓存 5s；
    * 取不到就省略字段，不影响 status。
    */
-  async #measureUsage(
-    kind: RuntimeKind,
-    runtimeStatus: { cpuPct?: number; memPct?: number } | undefined,
-  ): Promise<ProcessUsage> {
-    const fromRuntime: ProcessUsage = {}
-    if (runtimeStatus?.cpuPct !== undefined) fromRuntime.cpuPct = runtimeStatus.cpuPct
-    if (runtimeStatus?.memPct !== undefined) fromRuntime.memPct = runtimeStatus.memPct
-    if (fromRuntime.cpuPct !== undefined || fromRuntime.memPct !== undefined) {
-      return fromRuntime
-    }
-    if (this.#lifecycle.state !== 'running') return {}
-    if (kind !== 'attach' || !this.#device || this.#serialPending > 0) return {}
-    const now = this.#now()
-    if (this.#usageAt !== 0 && now - this.#usageAt < USAGE_CACHE_MS) {
-      return this.#usage ?? {}
-    }
-    const usage = await this.#sampleAttachUsage()
-    this.#usage = usage
-    this.#usageAt = now
-    return usage
-  }
-
-  async #sampleAttachUsage(): Promise<ProcessUsage> {
-    const device = this.#device
-    if (!device) return {}
-    try {
-      const [cpuText, memText] = await Promise.all([
-        device.shell(ATTACH_CPU_COMMAND),
-        device.shell(ATTACH_MEM_COMMAND),
-      ])
-      return usageFromAttachOutputs(cpuText, memText)
-    } catch {
-      return {}
-    }
-  }
-
-  /* ------------------------------- #83 动作与看门狗 ------------------------------- */
-
-  #runAction(action: ActionName, work: () => Promise<PhoneStatus>): Promise<PhoneStatus> {
-    this.#assertAlive()
-    const inflight = this.#actionInflight
-    if (inflight) {
-      if (inflight.action === action) return inflight.promise
-      const chained = inflight.promise
-        .catch(() => undefined)
-        .then(() => this.#executeAction(action, work))
-      this.#actionInflight = { action, promise: chained }
-      return chained
-    }
-    const promise = this.#executeAction(action, work)
-    this.#actionInflight = { action, promise }
-    return promise
-  }
-
-  #executeAction(action: ActionName, work: () => Promise<PhoneStatus>): Promise<PhoneStatus> {
-    const token = ++this.#actionToken
-    const previous = this.#actionQueue
-    const run = previous.catch(() => undefined).then(work)
-    this.#actionQueue = run.catch(() => undefined)
-    const timeoutMs = this.#deps.actionTimeoutMs ?? 180_000
-    const timed = withTimeout(
-      run,
-      timeoutMs,
-      () =>
-        new RuntimeError(
-          '动作 ' + action + ' 超时（' + timeoutMs + 'ms）',
-          action === 'stop' ? 'stop' : 'start',
-        ),
-    ).finally(() => {
-      if (this.#actionToken === token) this.#actionInflight = undefined
-    })
-    return timed
-  }
-
   async #adapterStatus(): Promise<RuntimeStatus | undefined> {
     const handle = await this.#runtime().catch(() => undefined)
     if (!handle) return undefined
     const status = await handle.adapter.status().catch(() => undefined)
     if (status) this.#lastRuntimeStatus = status
     return status
-  }
-
-  /**
-   * 停止（issue #83）：
-   * - booting：cancelStart 打断启动，立即落 stopped（不泄漏进程）；
-   * - adopted：只断开 ADB/流，不杀用户实例，lastError 提示；
-   * - owned：lifecycle.stopNow() → hooks.stop（adapter.stop 保存快照并等退出）。
-   */
-  async #doStop(options: StopOptions): Promise<PhoneStatus> {
-    if (this.#lifecycle.state === 'stopped') return this.status()
-    const runtimeStatus = await this.#adapterStatus()
-    const owned = runtimeStatus?.owned ?? runtimeStatus?.adopted !== true
-    if (this.#lifecycle.state === 'booting') {
-      const handle = this.#handle
-      await withTimeout(
-        handle?.adapter.cancelStart?.() ?? Promise.resolve(),
-        15_000,
-        () => new RuntimeError('取消启动超时', 'stop'),
-      ).catch(() => undefined)
-      await this.#closeSessions().catch(() => undefined)
-      await this.#disconnectAdb().catch(() => undefined)
-      this.#lifecycle.halt(options.force === true ? '已停止' : '已停止（启动被取消）')
-      this.#emitStatus()
-      return this.status()
-    }
-    if (!owned) {
-      await this.#closeSessions().catch(() => undefined)
-      await this.#disconnectAdb().catch(() => undefined)
-      this.#lifecycle.halt('已断开连接（实例由用户启动，未关闭）')
-      this.#emitStatus()
-      return this.status()
-    }
-    await this.#lifecycle.stopNow()
-    this.#emitStatus()
-    return this.status()
-  }
-
-  #syncWatchdog(state: PhoneState): void {
-    const shouldWatch = state === 'running' || state === 'booting'
-    if (!shouldWatch) {
-      this.#stopWatchdog()
-      return
-    }
-    if (this.#watchdogStop || this.#disposed) return
-    const intervalMs = this.#deps.watchdogIntervalMs ?? 2000
-    const schedule =
-      this.#deps.setInterval ??
-      ((callback: () => void, ms: number) => {
-        const timer = setInterval(callback, ms)
-        timer.unref?.()
-        return () => clearInterval(timer)
-      })
-    this.#watchdogStop = schedule(() => {
-      void this.#watchdogTick()
-    }, intervalMs)
-  }
-
-  #stopWatchdog(): void {
-    if (this.#watchdogStop) {
-      this.#watchdogStop()
-      this.#watchdogStop = undefined
-    }
-  }
-
-  /** 每 2s 对账（issue #83）：外部 kill/端口消失 → ≤2s 内 stopped + lastError + 清流。 */
-  async #watchdogTick(): Promise<void> {
-    if (this.#disposed || this.#disposing) return
-    const action = this.#actionInflight?.action
-    if (action === 'stop' || action === 'restart') return
-    const state = this.#lifecycle.state
-    if (state !== 'running' && state !== 'booting') return
-    const handle = this.#handle
-    if (!handle) return
-    const alive = await handle.adapter.isAlive().catch(() => false)
-    if (alive) return
-    if (this.#lifecycle.state !== state) return
-    await this.#handleExternalGone()
-  }
-
-  async #handleExternalGone(): Promise<void> {
-    const handle = this.#handle
-    await handle?.adapter.cancelStart?.().catch(() => undefined)
-    await this.#closeSessions().catch(() => undefined)
-    await this.#disconnectAdb().catch(() => undefined)
-    this.#lifecycle.halt('实例已被外部关闭（pid 消失/端口关闭）')
-    this.#handleError = undefined
-    this.#handleErrorAt = 0
-    this.#emitStatus()
-  }
-
-  #delay(delayMs: number): Promise<void> {
-    return new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, delayMs)
-      timer.unref?.()
-    })
   }
 
   #assertAlive(): void {
