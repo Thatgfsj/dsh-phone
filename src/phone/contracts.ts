@@ -24,6 +24,13 @@ export interface PhoneStatus {
   phase?: BootPhase
   endpoint?: Endpoint
   lastError?: string
+  /** issue #83：adapter 自己 spawn（true）vs adopt 用户已有实例（false）。 */
+  owned?: boolean
+  adopted?: boolean
+  /** 宿主进程 pid（runtime 提供；adopted 时为用户实例 pid）。 */
+  pid?: number
+  /** 进入当前状态的时间戳（ms）。 */
+  since?: number
 }
 
 /** 工具前置检查：running 可直接执行；booting 返回可重试中间态（不报错）。 */

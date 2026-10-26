@@ -27,6 +27,8 @@ import {
 import type { OnboardingState, OnboardingToolFailure } from '../config/onboarding.ts'
 import type { SettingsFacade } from '../config/write.ts'
 import type { PhoneOperations, PhoneStatus } from '../phone/contracts.ts'
+import { isRuntimeAction } from '../phone/lifecycle-control.ts'
+import type { LifecycleControllerLike, RuntimeAction } from '../phone/lifecycle-control.ts'
 import {
   isProvisionImage,
   isProvisionRuntime,
@@ -60,6 +62,8 @@ export interface ConfigSnapshot {
 
 export interface HttpRouteDeps {
   service: PhoneOperations
+  /** 生命周期控制（issue #83）：GET/POST /runtime。 */
+  lifecycle: LifecycleControllerLike
   /** 一键准备运行环境（issue #65）；仅浏览器同源请求可触发。 */
   provisioner: ProvisionerLike
   /**
@@ -390,6 +394,30 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
     sendPng(res, bytes)
   }
 
+  /** POST /runtime：异步入队 + 202；stop 仅浏览器同源（agent token → 403）。 */
+  async function handleRuntimeAction(
+    req: IncomingMessage,
+    res: ServerResponse,
+    options: { viaAgent: boolean },
+  ): Promise<void> {
+    const body = asRecord(await readJsonBody(req))
+    const action = body.action
+    if (!isRuntimeAction(action)) {
+      throw new ApiError(400, 'E_BAD_REQUEST', "action 必须是 start/stop/restart")
+    }
+    if (options.viaAgent && action === 'stop') {
+      throw new ApiError(
+        403,
+        'E_FORBIDDEN',
+        'stop（关闭手机）只能由用户在浏览器点击；Agent 通道只允许 start/restart 自愈',
+      )
+    }
+    const before = await deps.lifecycle.info()
+    deps.lifecycle.enqueue(action as RuntimeAction)
+    // 202 + 扁平体（issue #83 冻结）：{ok,action,state}；UI 轮询 GET /runtime
+    sendJson(res, 202, { ok: true, action, state: before.state })
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
@@ -399,13 +427,17 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
       const method = (req.method ?? 'GET').toUpperCase()
       const isAgentConfig = method === 'POST' && rawPath === '/agent/config'
       // 无浏览器 cookie 的 Agent 需要走：verify（R5）→ agent/config（R1）→ status（R4b）
+      const isRuntimeRoute = rawPath === '/runtime'
       const agentEligible =
         isAgentConfig ||
         (method === 'POST' && rawPath === '/attach/verify') ||
         (method === 'GET' && rawPath === '/status') ||
         // issue #71：Agent 需要读 revision 才能做 CAS 写入
-        (method === 'GET' && rawPath === '/config')
+        (method === 'GET' && rawPath === '/config') ||
+        // issue #83：Agent 可自愈（start/restart）；stop 在 handler 内按 action 拒绝
+        (isRuntimeRoute && (method === 'GET' || method === 'POST'))
 
+      let agentAuthorized = false
       const rejection = rejectionFor(deps.getConnection(), req)
       if (rejection) {
         const agentOk = agentEligible && deps.agentAuth !== undefined
@@ -415,6 +447,7 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
           sendRejection(res, rejection)
           return
         }
+        agentAuthorized = true
       }
 
       if (method === 'GET' && rawPath === '/status') {
@@ -425,6 +458,14 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
           return
         }
         sendSuccess(res, await deps.service.status())
+        return
+      }
+      if (method === 'GET' && rawPath === '/runtime') {
+        sendSuccess(res, await deps.lifecycle.info())
+        return
+      }
+      if (method === 'POST' && rawPath === '/runtime') {
+        await handleRuntimeAction(req, res, { viaAgent: agentAuthorized })
         return
       }
       if (method === 'GET' && rawPath === '/config') {

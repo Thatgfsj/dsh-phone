@@ -20,6 +20,8 @@ import { API_PREFIX, createApiHandler, createReadOnlyHandler } from './http/rout
 import type { ConfigView } from './http/routes.ts'
 import type { AttachmentsLike } from './phone/contracts.ts'
 import type { PhoneService } from './phone/service.ts'
+import { LifecycleController } from './phone/lifecycle-control.ts'
+import type { LifecycleServiceLike } from './phone/lifecycle-control.ts'
 import { createPhoneService, readOnboarding } from './phone/wiring.ts'
 import { createProvisioner } from './provisioning/defaults.ts'
 import { createCommandRunner } from './runtime/command.ts'
@@ -122,7 +124,13 @@ export function apply(ctx: Context, config: PhoneConfig): void {
 
   // 1) config → 2) phone service（懒启动，构造时不动外部资源）
   const service: PhoneService = createPhoneService(config)
-  ctx.effect(() => () => void service.dispose())
+  // 生命周期控制（issue #83）：动作异步/队列互斥；stop 仅浏览器触发。
+  const lifecycle = new LifecycleController(service as unknown as LifecycleServiceLike)
+  ctx.effect(() => () => {
+    // 不 await：卸载时不阻塞 Loader（长 boot/dispose 由 runtime 的 cancelStart 处理）
+    lifecycle.dispose()
+    void service.dispose()
+  })
 
   // 一键准备运行环境（issue #65）：懒执行，只有用户点击 POST /provision 才会跑命令
   const provisioner = createProvisioner({
@@ -159,6 +167,7 @@ export function apply(ctx: Context, config: PhoneConfig): void {
 
     const api = createApiHandler({
       service,
+      lifecycle,
       provisioner,
       getSettings: () => ctx.get('settings') as SettingsFacade | undefined,
       getConnection: () => ctx.get('connection') as ConnectionLike | undefined,
