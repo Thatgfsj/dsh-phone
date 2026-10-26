@@ -1,6 +1,6 @@
 # dsh-phone
 
-> 肥鱼的手机：给 DeepSeek Harness（DSH）提供一台运行在后端、经浏览器右侧栏呈现的 Android 实例，并注册 9 个 `phone_*` 工具供 Agent 直接操作。
+> 肥鱼的手机：这是大肥鱼的手机，主人不要动大肥鱼的手机喵。给 DeepSeek Harness（DSH）提供一台运行在后端、经浏览器右侧栏呈现的 Android 实例，并注册 9 个 `phone_*` 工具供 Agent 直接操作。
 
 [![DSH](https://img.shields.io/badge/DSH-0.2.1--rc.2-blue)](https://github.com/deepseek-ai/deepseek-harness)
 [![version](https://img.shields.io/badge/version-v0.3.0-blueviolet)](#版本与状态)
