@@ -1,6 +1,6 @@
 {
   "name": "dsh-phone",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "DSH 的手机：给 DeepSeek Harness 提供运行在后端、经浏览器右侧栏呈现的 Android 实例，并注册 phone_* 工具供 Agent 操作。",
   "type": "module",
   "main": "lib/index.js",
