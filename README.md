@@ -3,13 +3,13 @@
 > 肥鱼的手机：这是大肥鱼的手机，主人不要动大肥鱼的手机喵。给 DeepSeek Harness（DSH）提供一台运行在后端、经浏览器右侧栏呈现的 Android 实例，并注册 9 个 `phone_*` 工具供 Agent 直接操作。
 
 [![DSH](https://img.shields.io/badge/DSH-0.2.1--rc.2-blue)](https://github.com/deepseek-ai/deepseek-harness)
-[![version](https://img.shields.io/badge/version-v0.4.0-blueviolet)](#版本与状态)
+[![version](https://img.shields.io/badge/version-v0.4.1-blueviolet)](#版本与状态)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![files ≤1000 lines](https://img.shields.io/badge/file-%E2%89%A41000%20lines-brightgreen)](CONTRIBUTING.md)
 
 ## 版本与状态
 
-**v0.4.0（已发布）**：**生命周期控制 + 肥鱼手机定制**——面板/设置页可「启动 / 停止 / 重启」，外部 `kill -9` 后 **2s 内**变「已停止/被外部关闭」并给出一键重启；区分 owned（插件拉起的实例，关闭会保存快照）与 adopted（你自己的模拟器，停止只断开）。新增 `system/` 定制层，可把实例变成「大肥鱼的手机」：中文、空白桌面、双壁纸轮换。发布说明见 [CHANGELOG.md](CHANGELOG.md#v040---2026-10-27)，验收状态见 [docs/verification.md](docs/verification.md)。
+**v0.4.1（已发布）**：**应用抽屉 + 面板「应用」按钮**——空白桌面从屏幕底部**上滑**即打开 4 列应用抽屉（图标/中文名/搜索/点击启动），面板底部也新增「应用」按钮一键打开（窄屏图标化）。同时保留 v0.4.0 的**生命周期控制**（启动/停止/重启、外部 `kill -9` 后 2s 内兜底、owned/adopted 所有权）与**肥鱼手机定制**（中文、空白桌面、双壁纸轮换）。发布说明见 [CHANGELOG.md](CHANGELOG.md#v041---2026-10-27)，验收状态见 [docs/verification.md](docs/verification.md)。
 
 - 需求原文：[docs/SPEC.md](docs/SPEC.md)（**禁止改写**）。实现与需求的差异、未验证项见 [docs/host.md](docs/host.md)、[docs/runtime.md](docs/runtime.md)、[docs/stream.md](docs/stream.md)、[docs/client.md](docs/client.md)。
 - 集成点校准（DSH 0.2.1-rc.2 本机源码证据）：[docs/calibration.md](docs/calibration.md)；架构与协议契约：[docs/architecture.md](docs/architecture.md)、[docs/protocol.md](docs/protocol.md)。
@@ -21,14 +21,14 @@
 - **三种运行时 + auto 探测**：redroid（Docker 容器）/ Android SDK Emulator（KVM / WHPX / HVF，headless AVD）/ attach（连接用户自己的模拟器或真机）。
 - **懒启动与分级休眠**：首次工具调用或首次打开面板才拉起实例；**20 分钟**无交互 → `paused`，30 分钟或资源紧张 → `stopped`。`attach` 永不被插件停止；`lifecycle.prewarm`（默认 false）可在插件加载后预热。booting 时 `phone_status` 返回 `bootMs` 与 `phase`（launching/waiting-adbd/connecting-adb/ready），面板展示启动进度。
 - **双链路解耦**：Agent 只看按需单帧截图（约 100–300ms、零持续开销）；人看 scrcpy H.264 视频流（默认 720p / 15fps / 2Mbps，仅面板可见时传输）。Host 零转码；浏览器 WebCodecs 硬解，TinyH264 WASM 软解兜底。
-- **右侧栏面板与设置页**：面板是右侧栏的一个 tab（不遮蔽官方右栏），可从**会话头部手机按钮**或设置页打开；加载后 best-effort 自动打开（pending 时由面板首屏直接征询同意）。设置页维护「一句话」、显示解析状态/`enabled` 只读状态、提供重置入口与「打开手机面板」按钮。
+- **右侧栏面板与设置页**：面板是右侧栏的一个 tab（不遮蔽官方右栏），可从**会话头部手机按钮**或设置页打开；加载后 best-effort 自动打开（pending 时由面板首屏直接征询同意）。设置页维护「一句话」、显示解析状态/`enabled` 只读状态、提供重置入口与「打开手机面板」按钮。面板底部除 HOME/BACK/RECENTS/ENTER/DEL 外新增**「应用」按钮**（宽屏图标+文字、窄屏仅图标），一键打开桌面应用抽屉。
 - **生命周期控制（启动 / 停止 / 重启）**：面板 header 与设置页都有入口；**2s 看门狗**对账进程/端口——手机被外部 `kill -9` 后 ≤2s 状态变「已停止 / 被外部关闭」并给出「启动手机」；区分 **owned**（插件拉起：关闭会保存快照后退出）与 **adopted**（用户自己的实例：停止只断开、不杀进程）；`stop` 只能由用户在浏览器触发（Agent token 仅 start/restart）。
-- **肥鱼手机定制（可选）**：`system/` 提供一键换肤工具集——中文系统、空白桌面（无图标/widget）、两张壁纸轮换、去掉 YouTube、AVD 1080x2400；一键准备（Provisioning）会在 `step=customize` 自动应用，也可手动跑 `system/provision-device.sh`。详见 [system/README.md](system/README.md)。
+- **肥鱼手机定制（可选）**：`system/` 提供一键换肤工具集——中文系统、空白桌面（无图标/widget）、两张壁纸轮换、去掉 YouTube、AVD 1080x2400；一键准备（Provisioning）会在 `step=customize` 自动应用，也可手动跑 `system/provision-device.sh`。**上滑**空白桌面即打开 4 列应用抽屉（搜索/点击启动），面板底部「应用」按钮同样可打开。详见 [system/README.md](system/README.md)。
 - **首次接入「一句话」**：用户填一句话（如「用的雷电模拟器，装在默认位置」），操作 Agent 用本地 token 通道完成探测、连通验证与**定点**配置写入。
 
 ## 肥鱼手机
 
-`system/` 是「手机换肤」工具集（**插件本身不需要它**）：中文系统 + 空白桌面（无图标/widget）+ 两张壁纸轮换 + 去掉 YouTube，面向 `android-34;google_apis;x86_64` + AVD `medium_phone`（1080x2400 @420dpi）。一键准备会在 `step=customize` 自动应用；手动执行见 `system/provision-device.sh`（幂等），来源与许可见 [system/README.md](system/README.md)。
+`system/` 是「手机换肤」工具集（**插件本身不需要它**）：中文系统 + 空白桌面（无图标/widget）+ 两张壁纸轮换 + 去掉 YouTube，面向 `android-34;google_apis;x86_64` + AVD `medium_phone`（1080x2400 @420dpi）。首页保持空白，**从屏幕底部上滑**打开 4 列应用抽屉（中文名/搜索框/点击启动），或用面板底部「应用」按钮；一键准备会在 `step=customize` 自动应用，手动执行见 `system/provision-device.sh`（幂等），来源与许可见 [system/README.md](system/README.md)。
 
 <p>
   <img src="docs/screenshots/feiyu-home-1.webp" alt="肥鱼手机首页（壁纸 111）" width="260">
@@ -52,15 +52,15 @@
 
 ## 安装
 
-**v0.4.0 已可用。** 要求：DSH `>=0.2.1-rc.2 <0.3.0`、Node `>=20`；宿主浏览器需支持 WebCodecs（Chrome / Edge 等），不支持时自动回退 TinyH264 软解。
+**v0.4.1 已可用。** 要求：DSH `>=0.2.1-rc.2 <0.3.0`、Node `>=20`；宿主浏览器需支持 WebCodecs（Chrome / Edge 等），不支持时自动回退 TinyH264 软解。
 
 推荐安装 **GitHub Release 的预构建 tgz**（包内已有 `lib/`，**无需** `npm run build`）：
 
 ```sh
 # 1) 从 Releases 的 Assets 下载 dsh-phone-<version>.tgz（或 gh CLI）
-gh release download v0.4.0 -R Thatgfsj/dsh-phone -p 'dsh-phone-*.tgz'
+gh release download v0.4.1 -R Thatgfsj/dsh-phone -p 'dsh-phone-*.tgz'
 # 2) 安装到 web profile
-dsh plugin --profile web add ./dsh-phone-0.4.0.tgz
+dsh plugin --profile web add ./dsh-phone-0.4.1.tgz
 # 3) 必需：确认 bundle 真的被选中，再重启 DSH + 刷新页面（F5）
 dsh --profile web --dump-config | grep -n -A 8 'dsh-phone'
 ```
