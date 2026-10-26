@@ -311,3 +311,52 @@ const lifecycle = new PhoneLifecycle({ start, pause, resume, stop })
 - scrcpy-server 的 push（`AdbConnection.push` 已就绪，见 task-5）。
 - #37 合并后可从安装指引里删掉「手工下载 scrcpy-server」一节（改为纯自动），
   同步修改本文件与 `install-guide.ts` 的 SCRCPY_SECTION。
+
+
+## 5. 生命周期控制与外部 kill 兜底（issue #83）
+
+### 5.1 所有权
+
+`RuntimeStatus` 增加 `owned` / `adopted`（两者互斥）：
+
+| 适配器 | owned | adopted | isAlive() |
+|---|---|---|---|
+| emulator（插件 spawn） | true | false | pid 存活（booting 期端口未起也算活） |
+| emulator / attach（复用用户实例） | false | true | 端口/adb 连通性（不碰用户进程） |
+| redroid | true | false | docker 容器 running/paused |
+
+`PhoneStatus` 同步暴露 `owned/adopted/pid`（host 的 `GET /status`、`GET /api/runtime` 使用）。
+
+### 5.2 PhoneService 动作
+
+`start()` / `stop({force?})` / `restart()` / `isAlive()`，全部经 `ActionQueue` 单一互斥：
+
+- 同动作并发 → 复用同一个 in-flight promise；不同动作 → 串行排队；
+- 每动作超时（默认 180s，`actionTimeoutMs` 可注入），超时抛 `RuntimeError`；
+- **owned stop** → `lifecycle.stopNow()` → `hooks.stop` → `adapter.stop()`（保存 quick-boot 快照并等退出）；
+- **adopted stop** → 只关流 + 断开 ADB，`halt()` 置 stopped，lastError「已断开连接（实例由用户启动，未关闭）」；
+- **booting stop** → `adapter.cancelStart()`（最多等 15s）打断启动，立即 stopped（不泄漏进程）；
+- **restart** = `stop({force:true})` → `ensureRunning()`，返回最终状态。
+
+### 5.3 看门狗（外部 kill 兜底）
+
+running / booting 时每 **2s**（`watchdogIntervalMs` 可注入 `setInterval` 供单测）调用一次
+`adapter.isAlive()`；false → `cancelStart + closeSessions + disconnectAdb + lifecycle.halt`，
+写 lastError「实例已被外部关闭（pid 消失/端口关闭）」并广播状态。用户 <B>kill -9` emulator 后
+面板 ≤2–3s 即可看到「已停止」并提供「启动手机」。stop/restart 动作进行中跳过看门狗，避免误判。
+
+### 5.4 dispose（插件卸载/重载）
+
+`dispose()` 有 **硬预算（默认 5s，`disposeBudgetMs` 可注入）**：adapter.status / stop /
+流关闭 / `lifecycle.dispose`（它会 await boot inflight，最长可到 100s+）全部 `Promise.race`
+剩余预算；超预算放弃等待并完成卸载，解决「插件关不掉」：
+
+- owned：先尝试 `stopNow('插件卸载：已停止手机实例')`（保存快照），预算内等不到就放弃，不留启动阻塞；
+- adopted：只关流 + 断 ADB，绝不动用户实例；
+- 最后 `lifecycle.dispose()` 同样受预算约束。
+
+### 5.5 测试
+
+`tests/runtime/lifecycle-control.test.ts`：外部 kill → stopped+lastError；booting 中消失；
+owned/adopted stop 差异；booting stop 打断（cancelStart）；restart 序列；并发 stop 合并；
+动作超时；boot 挂起时 dispose ≤ 预算返回；dispose owned/adopted 差异。
