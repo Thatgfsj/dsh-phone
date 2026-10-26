@@ -353,3 +353,23 @@ attach.endpoint=127.0.0.1:5555。
 - redroid 的 `stop`/`dispose` 语义未实测（本机无 Docker）。
 - 冷启动仍 33–95s（见 §8），本版本未针对启动做优化。
 
+
+## 10. 空白桌面应用抽屉实测（issue #99）
+
+组件契约（host #100 / client #101 直接调用）：`com.dafeiyu.shell.DrawerActivity`
+（exported=true、launchMode=singleTop、深色半透明主题；固定命令
+`am start -n com.dafeiyu.shell/.DrawerActivity --activity-single-top`）。
+
+环境：emulator-5554 / android-34 google_apis / 1080x2400；APK versionCode=2 / versionName=1.1（561KB）。
+
+| 检查项 | 结果 | 证据 |
+|---|---|---|
+| 空白首页（无图标/widget） | PASS | /tmp/feiyu-99-home-before.png |
+| 上滑打开抽屉 | PASS | adb shell input swipe 540 2000 540 800 300 → mCurrentFocus=DrawerActivity；/tmp/feiyu-99-drawer.png（4 列网格：设置、TMobile；深色半透明；搜索框） |
+| adb 固定命令打开 | PASS | am start -n com.dafeiyu.shell/.DrawerActivity --activity-single-top → /tmp/feiyu-99-drawer-adb.png |
+| 从抽屉启动「设置」 | PASS | uiautomator bounds [32,435][270,480] → tap(151,457) → topResumedActivity=com.android.settings/.Settings；/tmp/feiyu-99-settings.png |
+| 返回 HOME 仍空白 | PASS | KEYCODE_HOME → mCurrentFocus=ShellActivity；/tmp/feiyu-99-home-after.png |
+
+说明：抽屉内应用列表来自 PackageManager MAIN/LAUNCHER，排除肥鱼桌面自身；当前设备只剩
+「设置 / TMobile」（YouTube 已在 #87 移除、NexusLauncher 已禁用）。命令行/tap 坐标/截图路径见
+/tmp/feiyu-99-evidence.txt。搜索框为名称过滤（本次未做自动化输入验证）。
