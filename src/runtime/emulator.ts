@@ -295,6 +295,8 @@ export class EmulatorRuntime implements RuntimeAdapter {
       kind: 'emulator',
       running: alive && !this.#paused,
       paused: this.#paused,
+      owned: !this.#adopted,
+      adopted: this.#adopted,
       endpoint: this.#endpoint,
       since: this.#since,
       pid: this.#pid,
@@ -305,6 +307,19 @@ export class EmulatorRuntime implements RuntimeAdapter {
       if (usage.memPct !== undefined) status.memPct = usage.memPct
     }
     return status
+  }
+
+  /**
+   * 看门狗用（issue #83）：owned 用 pid 存活判断（booting 期端口未起也算活）；
+   * adopted 用端口/adb（不碰用户进程）。
+   */
+  async isAlive(): Promise<boolean> {
+    if (this.#adopted) {
+      return this.#env.waitForPort(this.#endpoint, { timeoutMs: 300 }).catch(() => false)
+    }
+    const pid = this.#pid
+    if (pid === undefined) return false
+    return this.#runner.isProcessAlive(pid).catch(() => false)
   }
 
   async #sampleUsage(pid: number): Promise<ProcessUsage> {

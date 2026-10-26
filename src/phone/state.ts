@@ -84,6 +84,8 @@ export class PhoneLifecycle {
   #inflight: Promise<void> | undefined
   #pausing: Promise<void> | undefined
   #disposed = false
+  /** 代际（issue #83）：halt/stopNow 递增，已取消的 boot 完成后不得再置 running。 */
+  #epoch = 0
 
   constructor(
     hooks: LifecycleHooks,
@@ -185,6 +187,49 @@ export class PhoneLifecycle {
     this.#transition('stopped')
   }
 
+  /**
+   * 立即强制停止（issue #83）：用于「关闭手机」打断 booting/停止 owned 实例的前半步。
+   * 递增代际使进行中的 boot 完成后不再置 running；不调用 hooks.stop（由调用方决定）。
+   */
+  halt(reason?: string): void {
+    if (this.#disposed || this.#state === 'stopped') return
+    this.#epoch += 1
+    this.#idle.clear()
+    this.#bootStartedAt = undefined
+    this.#pausing = undefined
+    this.#lastError = reason
+    this.#transition('stopped')
+  }
+
+  /**
+   * 有序停止（issue #83）：递增代际 → 调 hooks.stop（owned 时保存快照/等退出）→ stopped。
+   * hooks.stop 失败也置 stopped（错误写入 lastError），避免状态卡死。
+   */
+  async stopNow(reason?: string): Promise<void> {
+    if (this.#disposed) return
+    this.#epoch += 1
+    this.#idle.clear()
+    this.#bootStartedAt = undefined
+    try {
+      if (this.#state !== 'stopped') await this.#hooks.stop()
+    } catch (error) {
+      this.#lastError = toError(error).message
+      this.#hooks.onError?.(toError(error), 'stop')
+    }
+    if (this.#state !== 'stopped') this.#transition('stopped')
+    if (reason !== undefined) {
+      this.#lastError = reason
+      const status = this.status
+      for (const listener of this.#listeners) {
+        try {
+          listener(status)
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
   /** 释放定时器与订阅（插件卸载时调用）。 */
   async dispose(): Promise<void> {
     this.#disposed = true
@@ -198,6 +243,7 @@ export class PhoneLifecycle {
   async #boot(resuming: boolean): Promise<void> {
     const phase: LifecyclePhase = resuming ? 'resume' : 'start'
     const previous: PhoneState = resuming ? 'paused' : 'stopped'
+    const epoch = this.#epoch
     this.#lastError = undefined
     this.#idle.clear()
     this.#bootStartedAt = this.#clock.now()
@@ -208,6 +254,7 @@ export class PhoneLifecycle {
         resuming ? this.#hooks.resume() : this.#hooks.start(),
         phase,
       )
+      if (epoch !== this.#epoch) return
       this.#bootMs = this.#clock.now() - (this.#bootStartedAt ?? this.#clock.now())
       this.#bootStartedAt = undefined
       // issue #44：成功进入 running 后清空历史错误（只保留当前状态相关错误）
@@ -215,6 +262,7 @@ export class PhoneLifecycle {
       this.#transition('running')
       this.#idle.armIdle()
     } catch (error) {
+      if (epoch !== this.#epoch) return
       this.#bootStartedAt = undefined
       const failure = toError(error)
       this.#lastError = failure.message

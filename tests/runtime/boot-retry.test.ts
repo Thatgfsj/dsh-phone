@@ -111,7 +111,8 @@ function makeHarness(options: {
     pause: async () => undefined,
     resume: async () => undefined,
     stop: async () => undefined,
-    status: async () => ({ kind: 'attach', running: true, paused: false, endpoint }),
+    status: async () => ({ kind: 'attach', running: true, paused: false, owned: false, adopted: true, endpoint }),
+    isAlive: async () => true,
   }
   const config: ServiceConfig = {
     runtime: 'attach',
