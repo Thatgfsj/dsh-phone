@@ -23,12 +23,6 @@ export interface PhoneStatus {
   /** booting 时的进度阶段（issue #56，可选，向后兼容）。 */
   phase?: BootPhase
   endpoint?: Endpoint
-  /** 实例是否由插件 spawn（issue #83；host GET /status /runtime 用）。 */
-  owned?: boolean
-  /** 是否为复用的用户实例（issue #83）。 */
-  adopted?: boolean
-  /** 宿主侧进程 pid（owned emulator；issue #83）。 */
-  pid?: number
   lastError?: string
   /** issue #83：adapter 自己 spawn（true）vs adopt 用户已有实例（false）。 */
   owned?: boolean
