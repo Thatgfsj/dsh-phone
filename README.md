@@ -3,22 +3,23 @@
 > 肥鱼的手机：给 DeepSeek Harness（DSH）提供一台运行在后端、经浏览器右侧栏呈现的 Android 实例，并注册 9 个 `phone_*` 工具供 Agent 直接操作。
 
 [![DSH](https://img.shields.io/badge/DSH-0.2.1--rc.2-blue)](https://github.com/deepseek-ai/deepseek-harness)
-[![version](https://img.shields.io/badge/version-v0.2.1-blueviolet)](#版本与状态)
+[![version](https://img.shields.io/badge/version-v0.3.0-blueviolet)](#版本与状态)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![files ≤1000 lines](https://img.shields.io/badge/file-%E2%89%A41000%20lines-brightgreen)](CONTRIBUTING.md)
 
 ## 版本与状态
 
-**v0.2.1（已发布）**：补丁版，重做**手机面板前端布局**——拆分 header/stage/footer、宽度断点 + 容器查询（≤360px），修复长文本被挤成竖排单字、booting 黑屏、header/footer 拥挤（[#62](https://github.com/Thatgfsj/dsh-phone/issues/62)）。功能面与 v0.2.0 相同（三运行时、9 个工具、scrcpy 流、onboarding 守卫）。发布说明见 [CHANGELOG.md](CHANGELOG.md#v021---2026-10-25)，验收状态见 [docs/verification.md](docs/verification.md)。
+**v0.3.0（已发布）**：**开箱即用 + 启动速度**——首次使用可「一键准备」运行环境（安装 emulator/系统镜像/AVD，进度日志，完成后自动启用）；emulator 温启动 **~15s**、暂停恢复 **~19s**（冷启动 33–95s 有客观下限）。同时包含 `attach.endpoint` 生效修复、Agent 通道安全收紧、视频流双页互踢/WS 背压修复（[#73](https://github.com/Thatgfsj/dsh-phone/issues/73)）、Release tgz/install-check 安装可用性。发布说明见 [CHANGELOG.md](CHANGELOG.md#v030---2026-10-26)，验收状态见 [docs/verification.md](docs/verification.md)。
 
 - 需求原文：[docs/SPEC.md](docs/SPEC.md)（**禁止改写**）。实现与需求的差异、未验证项见 [docs/host.md](docs/host.md)、[docs/runtime.md](docs/runtime.md)、[docs/stream.md](docs/stream.md)、[docs/client.md](docs/client.md)。
 - 集成点校准（DSH 0.2.1-rc.2 本机源码证据）：[docs/calibration.md](docs/calibration.md)；架构与协议契约：[docs/architecture.md](docs/architecture.md)、[docs/protocol.md](docs/protocol.md)。
 
 ## 能力
 
+- **一键准备运行环境**：首次使用/设置页可一键安装 Android SDK Emulator + system image + 创建 AVD（Provisioning API，进度/日志/幂等），完成后自动启用；**仅用户点击、浏览器同源触发**，Agent token 不能自动安装软件。
 - **9 个 `phone_*` 工具**：`phone_status` / `phone_screenshot` / `phone_tap` / `phone_swipe` / `phone_key` / `phone_input_text` / `phone_app_launch` / `phone_uiautomator_dump` / `phone_shell`。工具出现在 Agent 工具列表 = 插件开关已打开。
 - **三种运行时 + auto 探测**：redroid（Docker 容器）/ Android SDK Emulator（KVM / WHPX / HVF，headless AVD）/ attach（连接用户自己的模拟器或真机）。
-- **懒启动与分级休眠**：首次工具调用或首次打开面板才拉起实例；5 分钟无交互 → `paused`，30 分钟或资源紧张 → `stopped`。`attach` 永不被插件停止。booting 时 `phone_status` 返回 `bootMs` 与 `phase`（launching/waiting-adbd/connecting-adb/ready），面板展示启动进度。
+- **懒启动与分级休眠**：首次工具调用或首次打开面板才拉起实例；**20 分钟**无交互 → `paused`，30 分钟或资源紧张 → `stopped`。`attach` 永不被插件停止；`lifecycle.prewarm`（默认 false）可在插件加载后预热。booting 时 `phone_status` 返回 `bootMs` 与 `phase`（launching/waiting-adbd/connecting-adb/ready），面板展示启动进度。
 - **双链路解耦**：Agent 只看按需单帧截图（约 100–300ms、零持续开销）；人看 scrcpy H.264 视频流（默认 720p / 15fps / 2Mbps，仅面板可见时传输）。Host 零转码；浏览器 WebCodecs 硬解，TinyH264 WASM 软解兜底。
 - **右侧栏面板与设置页**：面板是右侧栏的一个 tab（不遮蔽官方右栏），可从**会话头部手机按钮**或设置页打开；加载后 best-effort 自动打开（pending 时由面板首屏直接征询同意）。设置页维护「一句话」、显示解析状态/`enabled` 只读状态、提供重置入口与「打开手机面板」按钮。
 - **首次接入「一句话」**：用户填一句话（如「用的雷电模拟器，装在默认位置」），操作 Agent 用本地 token 通道完成探测、连通验证与**定点**配置写入。
@@ -38,15 +39,15 @@
 
 ## 安装
 
-**v0.2.1 已可用。** 要求：DSH `>=0.2.1-rc.2 <0.3.0`、Node `>=20`；宿主浏览器需支持 WebCodecs（Chrome / Edge 等），不支持时自动回退 TinyH264 软解。
+**v0.3.0 已可用。** 要求：DSH `>=0.2.1-rc.2 <0.3.0`、Node `>=20`；宿主浏览器需支持 WebCodecs（Chrome / Edge 等），不支持时自动回退 TinyH264 软解。
 
 推荐安装 **GitHub Release 的预构建 tgz**（包内已有 `lib/`，**无需** `npm run build`）：
 
 ```sh
 # 1) 从 Releases 的 Assets 下载 dsh-phone-<version>.tgz（或 gh CLI）
-gh release download v0.2.1 -R Thatgfsj/dsh-phone -p 'dsh-phone-*.tgz'
+gh release download v0.3.0 -R Thatgfsj/dsh-phone -p 'dsh-phone-*.tgz'
 # 2) 安装到 web profile
-dsh plugin --profile web add ./dsh-phone-0.2.1.tgz
+dsh plugin --profile web add ./dsh-phone-0.3.0.tgz
 # 3) 必需：确认 bundle 真的被选中，再重启 DSH + 刷新页面（F5）
 dsh --profile web --dump-config | grep -n -A 8 'dsh-phone'
 ```
@@ -129,7 +130,8 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 | `redroid.image` / `memLimit` / `vcpuLimit` | `redroid/redroid:14-latest` / `2g` / `2` | 用户（模拟器参数） |
 | `emulator.avdName` / `resolution` | `""` / `720x1280` | 用户；空 avdName 表示首次自动创建 |
 | `stream.maxSize` / `maxFps` / `bitrate` | `720` / `15` / `2000000` | 归插件管，Agent 不调整 |
-| `lifecycle.idleTimeoutMs` / `pausedTimeoutMs` | `300000` / `1800000` | 用户 |
+| `lifecycle.idleTimeoutMs` / `pausedTimeoutMs` | `1200000` / `1800000` | 用户（20 分钟无交互 → paused） |
+| `lifecycle.prewarm` | `false` | 用户（插件加载后预热，加速首次打开） |
 | `limits.maxInstances` | `1` | 固定（首版单实例） |
 
 配置写入只走 `ctx.settings.mutate`（单键 + revision），落盘由 DSH `configEditor` 用 YAML Document 保留注释/顺序、原子写、失败回滚；插件**不**读写 `cordis.patch.yml`。
@@ -144,6 +146,8 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 | `GET /config` | 配置快照（含 onboarding）+ settings revision（浏览器/设置页） |
 | `POST /config` | 单键写入（浏览器设置页；支持 attach 三键 + onboarding 两键） |
 | `POST /attach/verify` | 连通验证（connect + `getprop ro.product.model`），不落盘（R5）；仅 loopback + 端口 ≥1024 |
+| `GET /provision` | 一键准备状态（state/step/percent/log/error） |
+| `POST /provision` | 启动/复用一键准备（浏览器同源；emulator/redroid/attach；幂等） |
 | `POST /agent/config` | 本地 Agent 单键写入（loopback + 无 Origin + `x-dsh-phone-token`） |
 | `GET /screenshot` | 按需单帧 PNG |
 
@@ -209,6 +213,9 @@ npm pack --dry-run
 - **npm 包名冲突**：npm 上的 `dsh-phone` 属于另一个项目（PonyDevAI/dsh-phone），本仓库未发布 registry；**禁止按名字安装**，必须用 Release tgz、源码目录或 git（见 [docs/install.md](docs/install.md) §1.1）。
 - **源码/git 安装可能半安装**：源码目录必须先 `npm run build`；从 `github:` 安装需要 `prepare` 且 profile 批准构建脚本，否则得到没有 `lib/` 的包；推荐 Release tgz，并按 §1.2 检查 `dsh.profile.bundles`。
 - **已有 emulator 实例不会自动复用**：启动 emulator runtime 可能再起一台同 AVD（端口顺延、资源翻倍）；有运行中的实例时优先 attach（见 [docs/install.md](docs/install.md) §1.4）。
+- **未完成的审查项**：[#72](https://github.com/Thatgfsj/dsh-phone/issues/72)（phone_key 白名单/screenshot 掩码/booting 断连/control 单飞）仍在跟踪；[#73](https://github.com/Thatgfsj/dsh-phone/issues/73)（viewer 心跳/引用计数代际/WS 背压/双页 4001）已随 v0.3.0 修复。
+- **启动时间**：温启动 ~15s / 暂停恢复 ~19s 为本机实测；冷启动 33–95s 有客观下限（Android 14 google_apis），`aosp_atd` 未实测。
+- **一键准备**需用户点击且浏览器同源触发（Agent token 不允许自动安装软件）；下载体积/时长取决于网络与 system image。
 - **#40 部分完成**：真实 emulator attach 与 scrcpy 实连已通过（#58：Host WS 102 帧/10s、控制通道/中文输入/截图 PASS）；仍待人工/环境的项：emulator 自启（B 分支）、真实浏览器渲染/WebCodecs/TinyH264、redroid（本机无 Docker）、审批 UI 点击。详见 [docs/verification.md](docs/verification.md) §2/§7 与 §4/§5 待办。
 - **`cpuPct/memPct` 为尽力而为**：emulator/redroid/attach 各自采样（emulator `/proc`、redroid `docker stats`、attach `dumpsys`），取不到就省略字段，不阻断 status；不要当精确监控。
 - **`phone_screenshot` 的模型图片能力**：仅捕获 `attachments.saveImage` 失败并降级文本，未探测模型路由是否接受图片。

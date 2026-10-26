@@ -102,7 +102,7 @@ nc -z 127.0.0.1 5555     # Windows: Test-NetConnection 127.0.0.1 -Port 5555
    └─ stopped → 任意 phone_* 调用触发懒启动；若 choice/runtime=attach 且 resolved=false → 转 §4 接入流程
 2. 操作循环：phone_screenshot（定位）→ phone_tap/swipe/input_text（执行）
    → 等待约 300ms → phone_screenshot（验证）→ 下一步
-3. 任务结束无需收尾：空闲 5 分钟自动 paused，30 分钟自动 stopped（attach 不断实例）
+3. 任务结束无需收尾：空闲 20 分钟自动 paused（观看视频算交互），30 分钟自动 stopped（attach 不断实例）
 ```
 
 要点：

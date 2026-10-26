@@ -21,7 +21,7 @@
 | `src/runtime/detect.ts` | SPEC §3.1 决策树 + 适配器工厂（安装指引委托 install-guide.ts） |
 | `src/runtime/install-guide.ts` | **安装命令单一数据源**（#38）：平台命令构建器 + 文本/hints 渲染 + onboarding 载荷 |
 | `src/runtime/attach.ts` / `emulator.ts` / `redroid.ts` | 三适配器 |
-| `src/phone/idle.ts` | idle(5min) / paused(30min) 计时器（可注入时钟） |
+| `src/phone/idle.ts` | idle(20min，默认) / paused(30min) 计时器（可注入时钟） |
 | `src/phone/state.ts` | `PhoneLifecycle` 状态机：懒启动、single-flight、booting 等待、唤醒、断连 |
 | `tests/fake-adb/*` | 假 adbd TCP 服务器（ADB 协议子集）/ 假 AdbConnection / 假命令执行器与环境 / 手动时钟 |
 | `tests/runtime/*` | transport / device / detect / adapters / state 单测 |
@@ -125,7 +125,8 @@ runtime 层本身**无状态**：`detectRuntime` / `resolveRuntime` 每次调用
 - 状态：`stopped → booting → running → paused → stopped`；`booting` 是可观测中间态，
   `status().bootMs` 在 booting 时是已耗时、之后是最近一次启动耗时。
 - **single-flight**：并发 `ensureRunning()` 复用同一个 in-flight promise；booting 期间的调用等待它。
-- **idle → paused**（默认 5min）：任意交互（`touch()`，即工具调用/面板输入/面板可见）重置计时；
+- **idle → paused**（默认 20min，#67）：任意交互（`touch()`，即工具调用/面板输入/面板可见）重置计时；
+  观看视频期间 viewer 每 60s 心跳 touch，不会被 idle 暂停；
   **paused → stopped**（默认 30min）。
 - `touch()` 在 paused 时默认顺手唤醒（`{wake:false}` 可只重置不唤醒）。
 - 断连：`notifyDisconnected(reason)` → 立即 `stopped` + `lastError`（指数退避重连由 service 层做），

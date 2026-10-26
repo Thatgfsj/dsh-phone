@@ -47,8 +47,9 @@ Host 不直接读写 `cordis.patch.yml`，不自行实现 runtime/收流；runti
 | `emulator.avdName` | `""` | ❌ | 空则首次自动创建 |
 | `emulator.resolution` | `720x1280` | ❌ | |
 | `stream.maxSize/maxFps/bitrate` | `720/15/2000000` | ❌ | 归插件管，Agent 不调整 |
-| `lifecycle.idleTimeoutMs` | `300000` | ❌ | running→paused |
+| `lifecycle.idleTimeoutMs` | `1200000` | ❌ | running→paused（20 分钟；观看视频算交互，#67） |
 | `lifecycle.pausedTimeoutMs` | `1800000` | ❌ | paused→stopped |
+| `lifecycle.prewarm` | `false` | ❌ | 插件加载后预热拉起实例（#67） |
 | `limits.maxInstances` | `1` | ❌ | 首版单实例 |
 
 ### 2.1 写入路径（R1–R5）

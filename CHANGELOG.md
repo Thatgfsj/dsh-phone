@@ -5,6 +5,71 @@
 
 ## [Unreleased]
 
+## [v0.3.0] - 2026-10-26
+
+第四次发布：**开箱即用**（一键准备运行环境）与 **emulator 启动速度专项**。
+
+### Added
+
+- **一键准备运行环境**（[#65](https://github.com/Thatgfsj/dsh-phone/issues/65)、
+  [#66](https://github.com/Thatgfsj/dsh-phone/issues/66)）：Provisioning API
+  （`GET /dsh-phone/api/provision` 返回 state/step/percent/log/error；`POST /dsh-phone/api/provision`
+  启动或复用，幂等）与首次使用/设置页的「一键准备并启用」UI（进度、日志、可取消、失败重试）；
+  emulator 路径会安装 emulator + system image（默认 `android-34;google_apis;x86_64`）、接受许可、
+  创建 AVD，done 后自动写 `onboarding.accepted`。**仅浏览器同源鉴权触发**，Agent token 通道不允许
+  自动安装软件。
+- **emulator 启动专项**（[#67](https://github.com/Thatgfsj/dsh-phone/issues/67)）：quick-boot 快照
+  自检/保存/加载；`boot_completed` + package manager 就绪检测；复用已运行实例（adopt）；
+  emulator spawn 日志与 FATAL 分类；AVD device profile；取消孤儿进程；空闲阈值 5min → **20min**
+  （观看也计为交互）；新增 `lifecycle.prewarm`（默认 false）；`scripts/verify/measure-boot.mjs` 测量脚本。
+  **实测**：温启动（有效快照）进程→首帧 **~15s**、暂停恢复 **~19s**（≤20s 目标达成）；
+  冷启动 **33–95s**（Android 14 google_apis 存在客观下限，未达成 20s）；`aosp_atd` 快镜像未实测。
+  数据见 [docs/verification.md](docs/verification.md)、[docs/runtime.md](docs/runtime.md)。
+- **安装与打包可用性**（[#74](https://github.com/Thatgfsj/dsh-phone/issues/74)）：`package.json` 增加
+  `prepare`（git 安装可构建 `lib/`）；GitHub Release 上传预构建 tgz 资产；新增
+  `scripts/install-check.mjs`（dependency/bundles/dump-config/API 四项自检与修复建议）；复用已有
+  emulator 实例指引。
+
+### Fixed
+
+- **attach.endpoint 写入生效 + R4b 真实验证**（[#70](https://github.com/Thatgfsj/dsh-phone/issues/70)）：
+  运行时指纹纳入 `attach.endpoint/resolved`；变化时丢弃旧 adapter/ADB 连接并强制重连；R4b 在新连接上
+  真实校验，不再假通过；覆盖旧端点场景测试。
+- **Agent 通道安全收紧**（[#71](https://github.com/Thatgfsj/dsh-phone/issues/71)）：Agent token 通道
+  不再能写 `onboarding.status/choice`（防自我授权绕过首次使用守卫）；`getOrigin()` 未 listen 时
+  try/catch 回退，避免 API/WS 注册整体失败；写入 **revision CAS 必填**；`/attach/verify` 限制 loopback
+  与端口 ≥1024；verified 记录带 **TTL**（5 分钟）。
+- **视频流与生命周期修复**（[#73](https://github.com/Thatgfsj/dsh-phone/issues/73)）：viewer 存活期间
+  每 60s 心跳计入交互（观看视频不再被 idle 暂停）；引用计数引入代际（旧 viewer 的 release 不会
+  关掉新流）；WS 背压（发送积压时 delta 丢弃，configuration/keyframe 超限以 1011 `E_STREAM_BACKPRESSURE`
+  断开重连）；服务端 60s 空闲超时（1011 `E_STREAM_IDLE`）；双页互踢改为 close **4001**
+  （`E_STREAM_REPLACED`，客户端提示「已在另一处打开」并停止自动重连）。
+- **面板布局重做**（[#62](https://github.com/Thatgfsj/dsh-phone/issues/62)、
+  [#63](https://github.com/Thatgfsj/dsh-phone/issues/63)，v0.2.1 已发布）：拆分 header/stage/footer、
+  布局断点 + `@container (max-width: 360px)`、长文本块，修复竖排单字/booting 黑屏/header/footer 拥挤。
+
+### Changed
+
+- **安装首公里文档**（[#75](https://github.com/Thatgfsj/dsh-phone/issues/75)）：README/install/troubleshooting
+  改为 Release 预构建 tgz 优先、安装后 `--dump-config` 校验、半安装修复、重启 DSH 与 F5 区别、
+  复用已运行 emulator（attach）指引。
+- 版本号 `0.2.1` → `0.3.0`（[#80](https://github.com/Thatgfsj/dsh-phone/issues/80)）；
+  README/install 的版本与 tgz 名同步。
+
+### 已知限制与未验证项
+
+- **未完成**：[#72](https://github.com/Thatgfsj/dsh-phone/issues/72)（phone_key 白名单/screenshot 掩码/
+  booting 断连/control 单飞）、[#40](https://github.com/Thatgfsj/dsh-phone/issues/40) 剩余真实浏览器验收。
+- **启动时间**：冷启动 33–95s 有客观下限（Android 14 google_apis）；`aosp_atd` 未实测；温启动 ~15s /
+  暂停恢复 ~19s 为本机实测，不代表所有机器。
+- **真实浏览器渲染/WebCodecs/TinyH264**：未端到端验证；解码失败会自动回退软解。
+- **npm 包名冲突未改名**：npm 上的 `dsh-phone` 属于另一个项目（PonyDevAI/dsh-phone），本仓库未发布
+  registry；必须用 Release tgz、源码目录或 git 安装。
+- **一键准备**需用户点击且浏览器同源触发（Agent token 不允许自动安装软件）；安装体积/时长取决于网络
+  与 system image，失败时保留日志供重试。
+- **单实例**（`limits.maxInstances: 1`）、`cpuPct/memPct` 尽力而为、scrcpy-server jar 懒下载等既有约束
+  不变；详见 [docs/verification.md](docs/verification.md)。
+
 ## [v0.2.1] - 2026-10-25
 
 补丁版：重做手机面板前端布局，修复长文本被挤成竖排单字、booting 黑屏与 header/footer 拥挤（#62）。
