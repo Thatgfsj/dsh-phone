@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 肥鱼手机空白桌面（com.dafeiyu.shell）。见 system/README.md 来源与许可（MIT）。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.dafeiyu.shell"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="34" />
+
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <uses-permission android:name="android.permission.SET_WALLPAPER_HINTS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <application
+        android:label="肥鱼桌面"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:allowBackup="false"
+        android:supportsRtl="true">
+
+        <!-- 空白 HOME：透明窗口 + 显示壁纸，只保留状态栏/导航栏 -->
+        <activity
+            android:name=".ShellActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Wallpaper.NoTitleBar"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".SwitchReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.dafeiyu.shell.SWITCH_WALLPAPER" />
+                <action android:name="com.dafeiyu.shell.SET_WALLPAPER" />
+                <action android:name="com.dafeiyu.shell.SET_INTERVAL" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
