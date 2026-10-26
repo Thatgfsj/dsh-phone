@@ -27,7 +27,10 @@ import { CLIENT_CSS } from './styles.ts'
 import { StreamClient } from './stream.ts'
 import type { StreamState } from './stream.ts'
 import { mapKeyboardKey, mapPointerToDevice } from './input.ts'
+import { messageOf } from './settings-api.ts'
 import type { ConfigApi } from './settings-api.ts'
+import { actionErrorKind } from './action-api.ts'
+import type { ActionApi } from './action-api.ts'
 import type { RuntimeApi } from './runtime-api.ts'
 import { createRuntimeControls } from './runtime-controls.ts'
 
@@ -36,11 +39,12 @@ export interface PanelViewDeps {
   t: Translate
   api: ConfigApi
   runtimeApi: RuntimeApi
+  actionApi: ActionApi
 }
 
 /** Build the panel body component for the current locale. */
 export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.ComponentType {
-  const { React, t, api, runtimeApi } = deps
+  const { React, t, api, runtimeApi, actionApi } = deps
   const h = React.createElement
   const PanelHeader = createPanelHeader({ React, t })
   const PanelStage = createPanelStage({ React, t })
@@ -61,7 +65,40 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
     const [meta, setMeta] = React.useState<{ width: number; height: number; codec: string; maxFps: number }>()
     const [error, setError] = React.useState<string>()
     const [boot, setBoot] = React.useState<BootProgress>()
+    const [appBusy, setAppBusy] = React.useState(false)
+    const [appFeedback, setAppFeedback] = React.useState<{ kind: 'ok' | 'unavailable' | 'error'; text: string }>()
+    const appTimerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
     const bootPollerRef = React.useRef<BootStatusPoller | null>(null)
+
+    React.useEffect(() => {
+      return () => {
+        if (appTimerRef.current !== undefined) clearTimeout(appTimerRef.current)
+      }
+    }, [])
+
+    const runApp = (): void => {
+      if (appBusy) return
+      setAppBusy(true)
+      setAppFeedback(undefined)
+      void actionApi
+        .run('app-drawer')
+        .then(() => {
+          setAppFeedback({ kind: 'ok', text: t('panel.app.ok') })
+          if (appTimerRef.current !== undefined) clearTimeout(appTimerRef.current)
+          appTimerRef.current = setTimeout(() => setAppFeedback(undefined), 3000)
+        })
+        .catch((error: unknown) => {
+          const kind = actionErrorKind(error)
+          setAppFeedback({
+            kind,
+            text:
+              kind === 'unavailable'
+                ? t('panel.app.unavailable')
+                : t('panel.app.failed', { message: messageOf(error) }),
+          })
+        })
+        .finally(() => setAppBusy(false))
+    }
 
     React.useEffect(() => {
       const stage = stageRef.current
@@ -252,7 +289,7 @@ export function createPhonePanelView(deps: PanelViewDeps): ReactNamespace.Compon
         onPointerCancel: endPointer,
         onKeyDown,
       }),
-      h(PanelFooter, { layout, onKey: sendKey, disabled: false }),
+      h(PanelFooter, { layout, onKey: sendKey, disabled: false, onApp: runApp, appBusy, appFeedback }),
     )
   }
 
