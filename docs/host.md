@@ -186,6 +186,7 @@ adapter 不可用失效、启动失败立即重探。
 | GET `/screenshot` | `image/png` + no-store；onboarding pending/declined → 200 JSON `E_ONBOARDING_*`；booting → 200 JSON `E_BOOTING`（error.bootMs） |
 | GET `/runtime` | `RuntimeInfo`（state/running/owned/adopted/pid/endpoint/since/busy/lastError）；见 §5.4 |
 | POST `/runtime` | body `{action:'start'|'stop'|'restart'}`；202 `{ok,action,state}` 异步入队；**stop 仅浏览器**，agent token 只允许 start/restart |
+| POST `/action` | body `{action:'app-drawer'}`；固定命令 + 5s 超时；200 `{ok:true}`；见 §5.5 |
 | GET `/provision` | `ProvisionStatus`（idle/running/done/failed + step/percent/log/error/runtime）；见 §5.3 |
 | POST `/provision` | body `{runtime, image?}`；**仅浏览器同源**触发一键准备；返回当前 `ProvisionStatus` |
 
@@ -241,6 +242,23 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 > 注意：`verify` 成功只记录在进程内 verified 集合（TTL 5 分钟）；插件重载或过期后需重新 verify。
 > Agent 通道**不能**写 `onboarding.*`：首次使用守卫的同意/选择必须由用户在浏览器设置页/引导卡片完成。
 > 候选路径/端口探测仍由操作 Agent 的 shell 完成（插件不扫盘，见 §6.1）。
+
+### 5.5 面板动作 API（issue #100）
+
+模块：`src/phone/actions.ts`（固定动作常量 + 错误分类），路由在 `src/http/routes.ts`。
+
+- `POST /action` body `{action:'app-drawer'}`；执行前先过 onboarding 守卫（pending/declined 返回 200 结构化引导，
+  不碰设备）与 `lifecycle.info().busy`/本地 in-flight 检查（409 `E_LIFECYCLE_BUSY`）。
+- **固定命令**：`am start -n com.dafeiyu.shell/.DrawerActivity --activity-single-top`，5s 超时
+  （`PhoneService.shell(cmd, {timeoutMs})` → 设备 shell 超时；不接受任意命令拼接）。
+- 成功 200 扁平 `{ok:true}`；失败 409 `E_APP_DRAWER_UNAVAILABLE`：
+  - 输出/异常含 `Activity class ... does not exist` / `Error type 3` → 未装定制（retryable=false，
+    message 提示运行 `system/provision-device.sh` 或更新肥鱼手机定制）；
+  - 超时（code=timeout / message 含 timeout/超时）→ retryable=true；
+  - 其它 shell 失败 → retryable=true 并附带原始 message。
+- 鉴权：agent token 允许（与浏览器一致；命令固定、无注入面）。
+- 测试：`tests/host/http-actions.test.ts`（成功/agent/未装输出/未装异常/超时/busy/非法 action），
+  `tests/host/http.test.ts` 覆盖鉴权与既有 API。
 
 ### 5.4 生命周期控制（issue #83）
 
@@ -353,6 +371,8 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
    形态（IPv4-mapped 等），也未验证卸载后 token 文件确实被删除。
 9. **`x-dsh-phone-token` 与同源 cookie 并存**：token 缺失但同源 cookie 有效时走普通 requestRejection
    分支放行（与浏览器 `POST /config` 等价），该分支只做了单测。
+14. **面板动作真机端到端**：`com.dafeiyu.shell/.DrawerActivity` 需 #87 定制 app 安装；host 用 fake service
+    覆盖成功/未装/超时/busy，未在真实 emulator 上点「应用」验证 Activity 拉起与切回。
 13. **肥鱼定制真机端到端**：`system/provision-device.sh` 由 #87 提供；本机未对真实 emulator 跑
     「spawn → customize → reboot → boot_completed」全流程（脚本存在时由假 runner/假 waiter 单测）。
     默认端口以外的 emulator 无法完成 boot_completed 等待（会记录警告，不影响 done）。
@@ -391,3 +411,4 @@ Host 单测（`tests/host/`，不依赖真机）：
 | `wiring.test.ts` | `readOnboarding` 与 `readServiceConfig`：accepted+choice 等价显式 runtime、pending 仍 auto |
 | `provision.test.ts` | 假 CommandRunner：emulator 成功/已装快速 done/aosp_atd 镜像/磁盘不足/断网/许可失败/AVD 创建失败/重复/并发/超时/redroid/attach/进度；**customize 顺序/缺失跳过/失败 done+warn/boot_completed 超时**；命令构建器与 locateSdkTools |
 | `lifecycle-control.test.ts` | info 映射、start/stop/restart 能力探测与回退、单队列互斥/busy、错误码 lastError、dispose |
+| `http-actions.test.ts` | POST /action app-drawer：成功固定命令+5s、agent token、未装/输出检测、超时、busy、非法 action |

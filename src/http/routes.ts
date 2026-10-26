@@ -26,6 +26,11 @@ import {
 } from '../config/onboarding.ts'
 import type { OnboardingState, OnboardingToolFailure } from '../config/onboarding.ts'
 import type { SettingsFacade } from '../config/write.ts'
+import {
+  AppDrawerUnavailableError,
+  isPhoneAction,
+  runPhoneAction,
+} from '../phone/actions.ts'
 import type { PhoneOperations, PhoneStatus } from '../phone/contracts.ts'
 import { isRuntimeAction } from '../phone/lifecycle-control.ts'
 import type { LifecycleControllerLike, RuntimeAction } from '../phone/lifecycle-control.ts'
@@ -203,6 +208,8 @@ function toApiError(error: unknown): ApiError {
 export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
   /** R5：本进程内通过 /attach/verify 连通验证过的端点 → 过期时间（带 TTL，issue #71）。 */
   const verified = new Map<string, number>()
+  /** 面板动作互斥（issue #100）：同一时刻只允许一个动作。 */
+  let actionInFlight = false
   const now = (): number => deps.now?.() ?? Date.now()
   const isVerified = (endpoint: string): boolean => {
     const expiresAt = verified.get(endpoint)
@@ -418,6 +425,36 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
     sendJson(res, 202, { ok: true, action, state: before.state })
   }
 
+  /** POST /action（issue #100）：固定动作 + 固定命令；agent token 也允许。 */
+  async function handleAction(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const blocked = onboardingGuard()
+    if (blocked) {
+      sendOnboardingFailure(res, blocked)
+      return
+    }
+    const body = asRecord(await readJsonBody(req))
+    if (!isPhoneAction(body.action)) {
+      throw new ApiError(400, 'E_BAD_REQUEST', "action 目前只支持 'app-drawer'")
+    }
+    const info = await deps.lifecycle.info()
+    if (info.busy || actionInFlight) {
+      throw new ApiError(409, 'E_LIFECYCLE_BUSY', '生命周期/面板动作正在执行，请稍后重试', true)
+    }
+    actionInFlight = true
+    try {
+      await runPhoneAction(body.action, deps.service)
+      // issue #100 冻结成功体：200 flat {ok:true}
+      sendJson(res, 200, { ok: true })
+    } catch (error) {
+      if (error instanceof AppDrawerUnavailableError) {
+        throw new ApiError(409, 'E_APP_DRAWER_UNAVAILABLE', error.message, error.retryable)
+      }
+      throw error
+    } finally {
+      actionInFlight = false
+    }
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
@@ -435,7 +472,9 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
         // issue #71：Agent 需要读 revision 才能做 CAS 写入
         (method === 'GET' && rawPath === '/config') ||
         // issue #83：Agent 可自愈（start/restart）；stop 在 handler 内按 action 拒绝
-        (isRuntimeRoute && (method === 'GET' || method === 'POST'))
+        (isRuntimeRoute && (method === 'GET' || method === 'POST')) ||
+        // issue #100：面板「应用」动作允许 agent token（固定命令，无注入面）
+        (method === 'POST' && rawPath === '/action')
 
       let agentAuthorized = false
       const rejection = rejectionFor(deps.getConnection(), req)
@@ -466,6 +505,10 @@ export function createApiHandler(deps: HttpRouteDeps): HttpRouteHandler {
       }
       if (method === 'POST' && rawPath === '/runtime') {
         await handleRuntimeAction(req, res, { viaAgent: agentAuthorized })
+        return
+      }
+      if (method === 'POST' && rawPath === '/action') {
+        await handleAction(req, res)
         return
       }
       if (method === 'GET' && rawPath === '/config') {
