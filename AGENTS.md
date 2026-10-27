@@ -1,6 +1,6 @@
 # AGENTS.md —— 给 AI 代理的仓库级硬规则
 
-本文件对所有在本仓库工作的 AI 代理（以及人类贡献者）生效；与 README / CONTRIBUTING 冲突时以更严格者为准。需求原文见 [docs/SPEC.md](docs/SPEC.md)，**禁止改写**。
+本文件对所有在本仓库工作的 AI 代理（以及人类贡献者）生效；与 README / CONTRIBUTING 冲突时以更严格者为准。
 
 ## 必须遵守
 
@@ -9,7 +9,7 @@
 3. **CI 只在构建期**：workflow 只允许 `v*` tag 与 `workflow_dispatch` 触发；禁止添加 `pull_request` 或普通 `push` 触发器。
 4. **单文件 ≤ 1000 行**（硬线，超过 1000 必须交用户决定）；目标 ≤ 300 行/文件，按职责拆分。
 5. **分支 / worktree / 构建产物及时清理**：不提交 `node_modules/`、`lib/`、`dist/`、`*.tgz`、`coverage/`、`assets/scrcpy-server*.jar`；合并后删远程分支、本地分支与 worktree；临时 profile 用完即删。
-6. **文档随代码同 PR 更新**：README / `docs/` / 配置字段说明。`docs/SPEC.md` 是需求原文，禁止改字。
+6. **文档随代码同 PR 更新**：README / `docs/` / 配置字段说明。
 7. **DSH 插件依赖红线**：宿主共享的 `@deepseek-ai/*` 包只能放 `peerDependencies` + `devDependencies`，**禁止**放 `dependencies`；`engines.dsh` 必须覆盖支持的 DSH 版本区间（当前 `>=0.2.1-rc.2 <0.3.0`）；只要包里有 `exports`，就必须显式导出 `./package.json` 与 `./locale/*.json`，否则图标与标题静默失效。
 8. **交付前自检**：`npm install`、`npm run check`、`node scripts/check-file-lines.mjs`、`npm run build` 全部通过，并在 PR/汇报里贴命令与输出。
 9. **不使用未验证的 API**：DSH 插件 API 以 dsh-plugin-skills 与本机 dsh 源码为准，禁止凭记忆猜签名；未验证项在文档中标注"未验证"。

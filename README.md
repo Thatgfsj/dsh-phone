@@ -11,7 +11,7 @@
 
 **v0.4.1（已发布）**：**应用抽屉 + 面板「应用」按钮**——空白桌面从屏幕底部**上滑**即打开 4 列应用抽屉（图标/中文名/搜索/点击启动），面板底部也新增「应用」按钮一键打开（窄屏图标化）。同时保留 v0.4.0 的**生命周期控制**（启动/停止/重启、外部 `kill -9` 后 2s 内兜底、owned/adopted 所有权）与**肥鱼手机定制**（中文、空白桌面、双壁纸轮换）。发布说明见 [CHANGELOG.md](CHANGELOG.md#v041---2026-10-27)，验收状态见 [docs/verification.md](docs/verification.md)。
 
-- 需求原文：[docs/SPEC.md](docs/SPEC.md)（**禁止改写**）。实现与需求的差异、未验证项见 [docs/host.md](docs/host.md)、[docs/runtime.md](docs/runtime.md)、[docs/stream.md](docs/stream.md)、[docs/client.md](docs/client.md)。
+- 实现与需求的差异、未验证项见 [docs/host.md](docs/host.md)、[docs/runtime.md](docs/runtime.md)、[docs/stream.md](docs/stream.md)、[docs/client.md](docs/client.md)。
 - 集成点校准（DSH 0.2.1-rc.2 本机源码证据）：[docs/calibration.md](docs/calibration.md)；架构与协议契约：[docs/architecture.md](docs/architecture.md)、[docs/protocol.md](docs/protocol.md)。
 
 ## 能力
@@ -198,7 +198,7 @@ curl -sS "$BASE/dsh-phone/api/status" -H "x-dsh-phone-token: $TOKEN"
 
 ```
 .
-├── docs/            # 需求原文、校准、架构/协议、实现说明与用户文档
+├── docs/            # 校准、架构/协议、实现说明与用户文档
 ├── locale/          # 中英文展示元数据（meta.title / meta.description）
 ├── scripts/         # 构建、行数检查、scrcpy-server 下载
 ├── src/             # Host（config/http/phone/tools）+ runtime/adb + stream + client
@@ -217,7 +217,7 @@ npm run build     # Host 逐文件 esbuild 转译 + Client __ModuleLoader__ 单�
 npm pack --dry-run
 ```
 
-文档随代码同 PR 更新；`docs/SPEC.md` 禁止改写。详见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [AGENTS.md](AGENTS.md)。
+文档随代码同 PR 更新；详见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [AGENTS.md](AGENTS.md)。
 
 ## 已知限制
 
@@ -249,7 +249,7 @@ npm pack --dry-run
 | 报错与常见现象 | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | 第三方依赖与许可 | [docs/third-party.md](docs/third-party.md) |
 | 给 Agent 的可安装技能 | [skill/dsh-phone/SKILL.md](skill/dsh-phone/SKILL.md) |
-| 需求 / 架构 / 协议 / 校准 | [docs/SPEC.md](docs/SPEC.md) / [docs/architecture.md](docs/architecture.md) / [docs/protocol.md](docs/protocol.md) / [docs/calibration.md](docs/calibration.md) |
+| 架构 / 协议 / 校准 | [docs/architecture.md](docs/architecture.md) / [docs/protocol.md](docs/protocol.md) / [docs/calibration.md](docs/calibration.md) |
 
 ## 协议
 

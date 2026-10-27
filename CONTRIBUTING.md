@@ -51,7 +51,7 @@ npm run build                    # 确认构建通过；产物 lib/ 不提交
 ## 6. 文档与接口
 
 - 文档随代码同 PR 更新：README、`docs/`、配置字段说明、CHANGELOG（若有）。
-- `docs/SPEC.md` 是需求原文，**禁止改写**；实现与需求的偏差写进 `docs/` 下的其它文档，并在 PR 说明。
+- 实现与需求的偏差写进 `docs/` 下的其它文档，并在 PR 说明。
 - 依赖、构建、导出（`exports`）的变更必须同步 `package.json`、`package-lock.json` 与本文档。
 - DSH 插件 API 以 dsh-plugin-skills 与本机 dsh 源码为准，禁止凭记忆猜签名；未验证项必须显式标注。
 

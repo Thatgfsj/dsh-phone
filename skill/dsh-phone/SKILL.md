@@ -12,7 +12,7 @@ whenToUse: 用户要求在 Android 设备上操作应用、看手机画面、连
 2. **操作者**：用 `phone_*` 工具操作那台 Android 实例完成任务；
 3. **接入助手**：用户选择 attach 后，按设置页里的「一句话」完成本机模拟器/真机的发现、验证与配置写入。
 
-本文件是可直接安装的 Agent 技能。仓库内实现文档在 `docs/`（`usage.md`、`config.md`、`troubleshooting.md`、`host.md`、`runtime.md`、`stream.md`、`client.md`），需求原文在 `docs/SPEC.md`。
+本文件是可直接安装的 Agent 技能。仓库内实现文档在 `docs/`（`usage.md`、`config.md`、`troubleshooting.md`、`host.md`、`runtime.md`、`stream.md`、`client.md`）。
 
 ## 1. 先确认可用性
 

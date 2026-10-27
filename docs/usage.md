@@ -2,7 +2,7 @@
 
 > 面向两类读者：**操作 Agent**（按 [skill/dsh-phone/SKILL.md](../skill/dsh-phone/SKILL.md) 的 SOP 工作）
 > 与**人类用户**（首次选择接入方式、在设置页填一句话、在右侧栏看手机）。
-> 需求原文见 [SPEC.md](SPEC.md) §4–§5；实现细节见 [host.md](host.md)、[stream.md](stream.md)、[client.md](client.md)、[config.md](config.md)。
+> 实现细节见 [host.md](host.md)、[stream.md](stream.md)、[client.md](client.md)、[config.md](config.md)。
 
 ## 1. 首次使用（onboarding 守卫）
 
