@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **移除 `docs/SPEC.md`**（[#110](https://github.com/Thatgfsj/dsh-phone/issues/110)）：需求原文不再随公开仓库
+  分发（仅在维护者本地备份）。文中「SPEC §x」引用为内部需求文档章节，不提供公开链接；README「文档」与
+  `docs/architecture.md` 开头已加说明。
+
 ## [v0.4.1] - 2026-10-27
 
 第六次发布：**空白桌面应用抽屉** + **面板「应用」按钮**（纯 app 与 Host/客户端小改，不动系统镜像）。
