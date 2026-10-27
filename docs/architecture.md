@@ -2,6 +2,8 @@
 
 > 依据：`docs/calibration.md`（本机 dsh 0.2.1-rc.2 源码证据）。本文在 INTERFACES v0 语义之上**细化**，
 > 唯一修正见 §2.4：右侧栏扩展点从 `rightbar` slot 改为 **`ctx.sidebarRightTabs` tab 类型**（语义不变）。
+>
+> 文中「SPEC §x」指内部需求文档的章节；该文档不随公开仓库分发（内容仅维护者本地备份）。
 
 ## 1. 模块边界
 

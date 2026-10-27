@@ -241,6 +241,8 @@ npm pack --dry-run
 
 ## 文档
 
+> 文中「SPEC §x」指内部需求文档的章节；该文档不随公开仓库分发（内容仅维护者本地备份）。
+
 | 想做什么 | 读哪个 |
 |---|---|
 | 安装 / 升级 / 卸载 / 临时 profile 验证 | [docs/install.md](docs/install.md) |
